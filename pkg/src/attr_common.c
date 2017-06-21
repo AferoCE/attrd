@@ -709,6 +709,7 @@ op_context_t *op_pool_alloc(void)
 void op_pool_free(op_context_t *o)
 {
     if (o != NULL) {
+        AFLOG_DEBUG2("freeing op:opId=%d", o->opId);
         o->next = sOpFree;
         sOpFree = o;
     }
