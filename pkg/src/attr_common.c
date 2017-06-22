@@ -372,7 +372,7 @@ int trans_receive_packet(uint8_t *buf, int bufSize,
         /* allocate a new transaction */
         t = trans_pool_alloc();
         if (t == NULL) {
-            AFLOG_ERR("handle_get_alloc_trans::");
+            AFLOG_ERR("handle_get_alloc_trans:: no get transaction context");
             status = AF_ATTR_STATUS_TOO_MANY_TRANSACTIONS;
             goto exit;
         }

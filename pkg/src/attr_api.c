@@ -389,7 +389,7 @@ static void close_callback (void *context)
     close_client(AF_ATTR_STATUS_UNSPECIFIED);
 }
 
-#define MAX_TRANSACTIONS (4)
+#define MAX_TRANSACTIONS (10)
 #define MAX_OPS          (10)
 
 int af_attr_open (struct event_base *base,
