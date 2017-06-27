@@ -286,7 +286,7 @@ static void on_get_request(uint8_t *rxBuf, int rxSize, int pos, uint32_t seqNum)
 
 error:
     if (g) {
-        op_pool_free(g);
+        op_cleanup(&sGetsToSend, g);
     }
     {
         /* send an unspecified error packet back */
@@ -585,7 +585,7 @@ int af_attr_set (uint32_t attributeId, uint8_t *value, int length, af_attr_set_r
 
 error:
     if (s) {
-        op_pool_free(s);
+        op_cleanup(&sOutstandingSets, s);
     }
 
     if (t) {

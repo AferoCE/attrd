@@ -778,16 +778,15 @@ void op_cleanup(op_context_t **head, op_context_t *o)
             evtimer_del(o->timeoutEvent);
             event_free(o->timeoutEvent);
             o->timeoutEvent = NULL;
-            AFLOG_DEBUG3("removed_timer:getId=%d", getId);
+            AFLOG_DEBUG3("removed_timer:opId=%d", getId);
         }
 
         /* remove the get from the list, if it's there */
         if (head != NULL) {
             op_remove(head, o);
-            AFLOG_DEBUG3("removed_get:getId=%d", getId);
+            AFLOG_DEBUG3("removed_op:opId=%d", getId);
         }
         op_pool_free(o);
-        AFLOG_DEBUG3("freed_get:getId=%d", getId);
     }
 }
 
