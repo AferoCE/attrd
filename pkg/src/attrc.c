@@ -10,7 +10,6 @@
 #include <event2/event.h>
 #include <event2/thread.h>
 #include <syslog.h>
-#include <unistd.h>
 
 #include "af_attr_client.h"
 #include "af_log.h"
@@ -68,26 +67,6 @@ static char sAttrOwner[32];
 
 struct event_base *sEventBase = NULL;
 
-uint16_t htoles(uint16_t value)
-{
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-    value = ((value & 0xff) << 8) | ((value & 0xff00) >> 8);
-#endif
-    return value;
-}
-
-#define letohs(_value) htoles(_value)
-
-uint32_t htolel(uint32_t value)
-{
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-    value = ((value & 0xff) << 24) | ((value & 0xff00) << 8) | ((value & 0xff0000) >> 8) | ((value & 0xff000000) >> 24);
-#endif
-    return value;
-}
-
-#define letohl(_value) htolel(_value)
-
 static void on_set_finished(int status, uint32_t attributeId, void *context)
 {
     if (status != AF_ATTR_STATUS_OK) {
@@ -109,33 +88,19 @@ static void print_value(uint8_t *value, int length, arg_type_t argType)
             printf ("%u", *(uint8_t *)value);
             break;
         case ARG_TYPE_UINT16:
-        {
-            uint16_t valueS = *(uint16_t *)value;
-            printf ("%d", letohs(valueS));
-        }
+            printf ("%d", af_attr_get_uint16(value));
             break;
         case ARG_TYPE_UINT32:
-        {
-            uint32_t valueL = *(uint32_t *)value;
-            printf ("%u", letohl(valueL));
-        }
+            printf ("%u", af_attr_get_uint32(value));
             break;
         case ARG_TYPE_INT8:
             printf ("%d", *(int8_t *)value);
             break;
         case ARG_TYPE_INT16:
-        {
-            uint16_t valueS = *(uint16_t *)value;
-            valueS = letohs(valueS);
-            printf ("%d", *(int16_t *)&valueS);
-        }
+            printf ("%d", af_attr_get_int16(value));
             break;
         case ARG_TYPE_INT32:
-        {
-            uint32_t valueL = *(uint32_t *)value;
-            valueL = letohl(valueL);
-            printf ("%d", *(int32_t *)&valueL);
-        }
+            printf ("%d", af_attr_get_int32(value));
             break;
         case ARG_TYPE_HEX:
             for (int i = 0; i<length; i++) {
@@ -367,7 +332,7 @@ convert_input_value(arg_type_t type, const char * val, int *lengthP)
 
         case ARG_TYPE_UINT8:
         {
-            long int long_val = strtoul(val, NULL, 10);
+            int32_t long_val = strtoul(val, NULL, 10);
             if ((long_val > UINT8_MAX) || (long_val < 0)) {
                 fprintf(stderr, "value outside of uint8_t range\n");
                 return NULL;
@@ -386,97 +351,91 @@ convert_input_value(arg_type_t type, const char * val, int *lengthP)
 
         case ARG_TYPE_UINT16:
         {
-            long int long_val = strtoul(val, NULL, 10);
+            int32_t long_val = strtol(val, NULL, 10);
             if ((long_val > UINT16_MAX) || (long_val < 0)) {
                 fprintf(stderr, "value outside of uint16_t range\n");
                 return NULL;
             }
-            uint16_t value = htoles((uint16_t) long_val);
-            setValue = malloc(sizeof(value));
+            setValue = malloc(sizeof(uint16_t));
             if (setValue == NULL)
             {
                 fprintf(stderr, "Memory allocation error\n");
                 return NULL;
             }
-            memcpy(setValue, &value, (sizeof(value)));
+            af_attr_store_uint16(setValue, (uint16_t)long_val);
             *lengthP = sizeof(uint16_t);
             break;
         }
 
         case ARG_TYPE_UINT32:
         {
-            long int long_val = strtoul(val, NULL, 10);
-            if ((long_val > UINT32_MAX) || (long_val < 0)) {
-                fprintf(stderr, "value outside uint32_t range\n");
+            errno = 0;
+            uint32_t long_val = strtoul(val, NULL, 10);
+            if (val[0] == '-' || (long_val == UINT32_MAX && errno == ERANGE)) {
+                fprintf(stderr, "value outside of uint32_t range\n");
                 return NULL;
             }
-            uint32_t value = htolel((uint32_t) long_val);
-            setValue = malloc(sizeof(value));
+            setValue = malloc(sizeof(uint32_t));
             if (setValue == NULL) {
                 fprintf(stderr, "Memory allocation error\n");
                 return NULL;
             }
-            memcpy(setValue, &value, (sizeof(value)));
+            af_attr_store_uint32(setValue, long_val);
             *lengthP = sizeof(uint32_t);
             break;
         }
 
         case ARG_TYPE_INT8:
         {
-            long int long_val = strtol(val, NULL, 10);
+            int32_t long_val = strtol(val, NULL, 10);
             if ((long_val > INT8_MAX) || (long_val < INT8_MIN)) {
                 fprintf(stderr, "value outside of int8_t range\n");
                 return NULL;
             }
-            int8_t value_signed = (int8_t) long_val;
-            uint8_t value = *(uint8_t*)&value_signed;
-            setValue = malloc(sizeof(value));
+            setValue = malloc(sizeof(int8_t));
             if (setValue == NULL)
             {
                fprintf(stderr, "Memory allocation error\n");
                return NULL;
             }
-            memcpy(setValue, &value, (sizeof(value)));
+            int8_t value = (int8_t)long_val;
+            memcpy(setValue, &value, sizeof(value));
             *lengthP = sizeof(int8_t);
             break;
         }
 
         case ARG_TYPE_INT16:
         {
-            long int long_val = strtol(val, NULL, 10);
+            int32_t long_val = strtol(val, NULL, 10);
             if ((long_val > INT16_MAX) || (long_val < INT16_MIN)) {
                 fprintf(stderr, "value outside of int16_t range\n");
                 return NULL;
             }
-            int16_t value_signed = (int16_t) long_val;
-            uint16_t value = htoles(*(uint16_t*)&value_signed);
-            setValue = malloc(sizeof(value));
+            setValue = malloc(sizeof(int16_t));
             if (setValue == NULL)
             {
                 fprintf(stderr, "Memory allocation error\n");
                 return NULL;
             }
-            memcpy(setValue, &value, (sizeof(value)));
+            af_attr_store_int16(setValue, (int16_t)long_val);
             *lengthP = sizeof(int16_t);
             break;
         }
 
         case ARG_TYPE_INT32:
         {
-            long int long_val = strtol(val, NULL, 10);
-            if ((long_val > INT32_MAX) || (long_val < INT32_MIN)) {
+            int32_t long_val = strtol(val, NULL, 10);
+            if ((long_val == INT32_MIN || long_val == INT32_MAX) && errno == ERANGE) {
                 fprintf(stderr, "value outside of int32_t range\n");
                 return NULL;
             }
-            int32_t value_signed = (int32_t) long_val;
-            uint32_t value = htolel(*(uint32_t*)&value_signed);
-            setValue = malloc(sizeof(value));
+            setValue = malloc(sizeof(int32_t));
             if (setValue == NULL)
             {
                 fprintf(stderr, "Memory allocation error\n");
                 return NULL;
             }
-            memcpy(setValue, &value, (sizeof(value)));
+            af_attr_store_int32(setValue, long_val);
             *lengthP = sizeof(int32_t);
             break;
         }
@@ -628,23 +587,24 @@ static int parse_params(int argc, char * argv[])
 
 int main(int argc, char * argv[])
 {
-    int o;
+    int parse_ret = ATTRC_OK;
 
     strcpy(sAttrOwner, "IPC.ATTRC");
 
-    while ((o = getopt(argc, argv, "s:")) >= 0) {
-        switch (o) {
-            case 's' :
+    if (argc > 1) {
+        if (!strcmp(argv[1], "-s")) {
+            if (argc > 2) {
                 strcpy(sAttrOwner, IPC_NAME_PREFIX);
-                strncat(sAttrOwner, optarg, sizeof(sAttrOwner) - sizeof(IPC_NAME_PREFIX));
-                break;
-            default :
+                strncat(sAttrOwner, argv[2], sizeof(sAttrOwner) - sizeof(IPC_NAME_PREFIX));
+                parse_ret = parse_params(argc - 2, &argv[2]);
+            } else {
                 usage();
                 return AF_ATTR_STATUS_BAD_PARAM;
+            }
+        } else {
+            parse_ret = parse_params(argc, argv);
         }
     }
-
-    int parse_ret = parse_params(argc - (optind - 1), &argv[optind - 1]);
 
     if (parse_ret == ATTRC_ERR) {
         usage();

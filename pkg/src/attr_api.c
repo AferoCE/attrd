@@ -890,3 +890,88 @@ void af_attr_close (void)
     trans_pool_deinit();
     op_pool_deinit();
 }
+
+/* code to store and retrieve attributes in Little Endian */
+void af_attr_store_uint16(uint8_t *dst, uint16_t value)
+{
+    if (dst == NULL) {
+        return;
+    }
+
+    *dst++ = value & 0xff;
+    *dst++ = value >> 8;
+}
+
+uint16_t af_attr_get_uint16(uint8_t *src)
+{
+    if (src == NULL) {
+        return 0;
+    }
+
+    return src[0] | (src[1] << 8);
+}
+
+void af_attr_store_int16(uint8_t *dst, int16_t value)
+{
+    if (dst == NULL) {
+        return;
+    }
+
+    uint16_t valueU = *(uint16_t *)&value;
+    *dst++ = valueU & 0xff;
+    *dst++ = valueU >> 8;
+}
+
+int16_t af_attr_get_int16(uint8_t *src)
+{
+    if (src == NULL) {
+        return 0;
+    }
+
+    uint16_t valueU = src[0] | (src[1] << 8);
+    return *(int16_t *)&valueU;
+}
+
+void af_attr_store_uint32(uint8_t *dst, uint32_t value)
+{
+    if (dst == NULL) {
+        return;
+    }
+
+    *dst++ = value & 0xff;
+    *dst++ = (value & 0xff00) >> 8;
+    *dst++ = (value & 0xff0000) >> 16;
+    *dst++ = value >> 24;
+}
+
+uint32_t af_attr_get_uint32(uint8_t *src)
+{
+    if (src == NULL) {
+        return 0;
+    }
+
+    return src[0] | (src[1] << 8) | (src[2] << 16) | (src[3] << 24);
+}
+
+void af_attr_store_int32(uint8_t *dst, int32_t value)
+{
+    if (dst == NULL) {
+        return;
+    }
+
+    uint32_t valueU = *(uint32_t *)&value;
+    *dst++ = valueU & 0xff;
+    *dst++ = (valueU & 0xff00) >> 8;
+    *dst++ = (valueU & 0xff0000) >> 16;
+    *dst++ = valueU >> 24;
+}
+
+int32_t af_attr_get_int32(uint8_t *src)
+{
+    if (src == NULL) {
+        return 0;
+    }
+
+    uint32_t valueU = src[0] | (src[1] << 8) | (src[2] << 16) | (src[3] << 24);
+    return *(int32_t *)&valueU;
+}

@@ -151,4 +151,15 @@ int af_attr_send_get_response (int status, uint16_t getId, uint8_t *value, int l
  */
 void af_attr_close (void);
 
+/* store and retrieve integer attributes */
+void af_attr_store_uint16(uint8_t *dst, uint16_t value);
+uint16_t af_attr_get_uint16(uint8_t *src);
+void af_attr_store_int16(uint8_t *dst, int16_t value);
+int16_t af_attr_get_int16(uint8_t *src);
+
+void af_attr_store_uint32(uint8_t *dst, uint32_t value);
+uint32_t af_attr_get_uint32(uint8_t *src);
+void af_attr_store_int32(uint8_t *dst, int32_t value);
+int32_t af_attr_get_int32(uint8_t *src);
+
 #endif // __AF_ATTR_CLIENT_H__
