@@ -1,7 +1,7 @@
 /*
  * file af_attr_def.h -- definitions for attribute daemon
  *
- * Copyright (c) 2016 Afero, Inc. All rights reserved.
+ * Copyright (c) 2016-2017 Afero, Inc. All rights reserved.
  *
  */
 #ifndef __AF_ATTR_DEF_H__

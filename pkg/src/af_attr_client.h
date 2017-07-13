@@ -1,7 +1,7 @@
 /*
  * file af_attr_client.h -- Attribute daemon client API
  *
- * Copyright (c) 2016 Afero, Inc. All rights reserved.
+ * Copyright (c) 2016-2017 Afero, Inc. All rights reserved.
  *
  */
 #ifndef __AF_ATTR_CLIENT_H__

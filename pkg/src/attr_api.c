@@ -1,7 +1,7 @@
 /*
  * attr_api.c -- attribute daemon client library
  *
- * Copyright (c) 2016 Afero, Inc. All rights reserved.
+ * Copyright (c) 2016-2017 Afero, Inc. All rights reserved.
  *
  */
 
@@ -51,6 +51,7 @@ static op_context_t *sRequestedGets = NULL;
 static op_context_t *sGetsToSend = NULL;
 static op_context_t *sOutstandingSets = NULL;
 
+/* returns the timeout for the get operation for the attribute specified by ID */
 static uint16_t get_timeout_for_attribute_id(uint32_t attrId)
 {
     int i;
@@ -130,41 +131,58 @@ exit:
 }
 
 
+/* This callback is used to send a response for the IPC client. The IPC server and IPC
+ * client APIs are slightly different while the transaction transmit and receive functions
+ * defined in attr_common.c are generic for client and server. Therefore we need this
+ * callback is to provide a generic function to send a response to a request from the
+ * attribute daemon.
+ */
 static int send_response(uint32_t seqNum, uint8_t *buf, int bufSize)
 {
     return af_ipcc_send_response(sClient->server, seqNum, buf, bufSize);
 }
 
-static void on_transaction(uint8_t *rxBuf, int rxSize, uint32_t seqNum, uint8_t opcode)
+/* This function is called when the client receives a transaction. There are three types
+ * of transactions the client can receive:
+ *   set:    another client has set an attribute this client owns
+ *   notify: an attribute this client is interested in has been set
+ *   get:    the attribute value this client has requested is being returned
+ * This function calls the client callbacks to notify the client of these events. If the
+ * transaction is a set, an unsolicited reply is sent with the status indicating whether
+ * the set succeeded or not.
+ */
+static void handle_transaction(uint8_t *rxBuf, int rxSize, uint32_t seqNum, uint8_t opcode)
 {
     trans_context_t *t = NULL;
     int status = trans_receive_packet(rxBuf, rxSize, &t, &sReadTrans, seqNum, sClient->base, send_response);
 
     AFLOG_DEBUG3("on_transaction:status=%d,t_null=%d,timeout=%d",
-                 status, t == NULL, (t != NULL && t->u2.rxc.timeoutEvent != NULL) ) ;
+                 status, t == NULL, (t != NULL && t->u.rxc.timeoutEvent != NULL) ) ;
 
-    if (status == 0) {
-        if (t && t->u2.rxc.timeoutEvent == NULL) {
-            /* get actual data */
-            uint8_t *data = t->size > MAX_SIZE_FOR_INTERNAL_DATA ? t->u.dataP : t->u.data;
+    if (status == AF_ATTR_STATUS_OK) {
+        if (t != NULL && t->u.rxc.timeoutEvent == NULL) {
             switch (opcode) {
                 case  AF_ATTR_OP_SET :
                     if (g_debugLevel >= 1) {
                         char hexBuf[80];
-                        af_util_convert_data_to_hex_with_name("value", data, t->size, hexBuf, sizeof(hexBuf));
-                        AFLOG_DEBUG1("client_received_owner_set:attrId=%d:%s", t->attrId, hexBuf);
+                        af_util_convert_data_to_hex_with_name("value", t->attrValue->value, t->attrValue->size, hexBuf, sizeof(hexBuf));
+                        AFLOG_DEBUG1("client_received_owner_set:attrId=%d:%s", t->attrValue->attrId, hexBuf);
                     }
+                    uint8_t setStatus = AF_ATTR_STATUS_NOT_IMPLEMENTED;
                     if (sClient->ownerSetCallback) {
-                        uint8_t setStatus = (uint8_t)(sClient->ownerSetCallback)(t->attrId, data, t->size, sClient->context);
-                        uint8_t txBuf[30];
-                        int len = set_reply_create_rpc(setStatus, t->opId, txBuf, sizeof(txBuf));
-                        if (len < 0) {
-                            AFLOG_ERR("client_set_reply_create_rpc:len=%d:failed to create RPC for set reply", len);
-                        } else {
-                            AFLOG_DEBUG1("client_sending_owner_set_status:attrId=%d,status=%d", t->attrId, status);
-                            if (af_ipcc_send_unsolicited(sClient->server, txBuf, len) < 0) {
-                                AFLOG_ERR("client_set_reply_send:errno=%d", errno);
-                            }
+                        setStatus = (uint8_t)(sClient->ownerSetCallback)(t->attrValue->attrId,
+                                                                         t->attrValue->value,
+                                                                         t->attrValue->size,
+                                                                         sClient->context);
+                    }
+                    uint8_t txBuf[30];
+                    int len = set_reply_create_rpc(setStatus, t->opId, txBuf, sizeof(txBuf));
+                    if (len < 0) {
+                        AFLOG_ERR("client_set_reply_create_rpc:len=%d:failed to create RPC for set reply", len);
+                    } else {
+                        AFLOG_DEBUG1("client_sending_owner_set_status:attrId=%d,status=%d", t->attrValue->attrId, status);
+                        if (af_ipcc_send_unsolicited(sClient->server, txBuf, len) < 0) {
+                            AFLOG_ERR("client_set_reply_send:errno=%d", errno);
                         }
                     }
                     break;
@@ -172,11 +190,11 @@ static void on_transaction(uint8_t *rxBuf, int rxSize, uint32_t seqNum, uint8_t 
                 case AF_ATTR_OP_NOTIFY :
                     if (g_debugLevel >= 1) {
                         char hexBuf[80];
-                        af_util_convert_data_to_hex_with_name("value", data, t->size, hexBuf, sizeof(hexBuf));
-                        AFLOG_DEBUG1("client_received_notify:attrId=%d:%s", t->attrId, hexBuf);
+                        af_util_convert_data_to_hex_with_name("value", t->attrValue->value, t->attrValue->size, hexBuf, sizeof(hexBuf));
+                        AFLOG_DEBUG1("client_received_notify:attrId=%d:%s", t->attrValue->attrId, hexBuf);
                     }
                     if (sClient->notifyCallback) {
-                        (sClient->notifyCallback)(t->attrId, data, t->size, sClient->context);
+                        (sClient->notifyCallback)(t->attrValue->attrId, t->attrValue->value, t->attrValue->size, sClient->context);
                     }
                     break;
 
@@ -191,12 +209,12 @@ static void on_transaction(uint8_t *rxBuf, int rxSize, uint32_t seqNum, uint8_t 
                     if (g) {
                         if (g_debugLevel >= 1) {
                             char hexBuf[80];
-                            af_util_convert_data_to_hex_with_name("value", data, t->size, hexBuf, sizeof(hexBuf));
-                            AFLOG_DEBUG1("client_received_get_resp:attrId=%d:%s", t->attrId, hexBuf);
+                            af_util_convert_data_to_hex_with_name("value", t->attrValue->value, t->attrValue->size, hexBuf, sizeof(hexBuf));
+                            AFLOG_DEBUG1("client_received_get_resp:attrId=%d:%s", t->attrValue->attrId, hexBuf);
                         }
                         if (g->u.c.callback) {
                             ((af_attr_get_response_callback_t)(g->u.c.callback))
-                                (0, t->attrId, data, t->size, g->u.c.context);
+                                (0, t->attrValue->attrId, t->attrValue->value, t->attrValue->size, g->u.c.context);
                         }
                         op_cleanup(&sRequestedGets, g);
                     } else {
@@ -206,26 +224,48 @@ static void on_transaction(uint8_t *rxBuf, int rxSize, uint32_t seqNum, uint8_t 
                     break;
 
                 default :
-                    AFLOG_ERR("handle_notify_set_getr_request_opcode:opcode=%d:", opcode);
+                    AFLOG_ERR("handle_transaction_opcode:opcode=%d:", opcode);
                     break;
             }
             trans_cleanup(t);
         }
     } else {
-        AFLOG_ERR("handle_notify_set_request_bad_status:status=%d:", status);
+        AFLOG_ERR("handle_transaction:status=%d:", status);
     }
 }
 
-static void on_attr_get_send_timeout(evutil_socket_t fd, short what, void *context)
+/* This function is called if the client does not reply to the get request callback with a
+   call to af_attr_send_get_response call within the get timeout for that attribute
+   (defined in af_attr_def.h).
+*/
+static void handle_client_get_send_timeout(evutil_socket_t fd, short what, void *context)
 {
     if (context != NULL) {
         op_context_t *g = (op_context_t *)context;
         AFLOG_ERR("client_get_response_timeout:getId=%d,attrId=%d", g->opId, g->attrId);
+
+        /* send an error packet back */
+        uint8_t buf[30];
+        af_rpc_param_t params[2];
+        AF_RPC_SET_PARAM_AS_UINT8(params[0], AF_ATTR_STATUS_NOT_IMPLEMENTED);
+        AF_RPC_SET_PARAM_AS_UINT16(params[1], g->opId);
+        int len = af_rpc_create_buffer_with_params(buf, sizeof(buf), params, ARRAY_SIZE(params));
+        if (len >= 0) {
+            if (af_ipcc_send_response(sClient->server, g->u.sg.clientSeqNum, buf, len) < 0) {
+                AFLOG_ERR("handle_get_send_timeout_send:errno=%d", errno);
+            }
+        } else {
+            AFLOG_ERR("handle_get_send_timeout_rpc:len=%d", len);
+        }
+
         op_cleanup(&sGetsToSend, g);
     }
 }
 
-static void on_get_request(uint8_t *rxBuf, int rxSize, int pos, uint32_t seqNum)
+/* This function is called when the client receives a get request. It unpacks the request
+ * and calls the client's get callback.
+ */
+static void handle_get_request(uint8_t *rxBuf, int rxSize, int pos, uint32_t seqNum)
 {
     if (rxBuf == NULL || rxSize <= 0 || pos <= 0 || pos >= rxSize) {
         AFLOG_ERR("handle_get_request_param:rxBuf_null=%d,rxSize=%d,pos=%d",
@@ -235,6 +275,7 @@ static void on_get_request(uint8_t *rxBuf, int rxSize, int pos, uint32_t seqNum)
     uint32_t attrId;
     uint16_t getId;
     uint16_t timeout;
+    uint8_t status = AF_ATTR_STATUS_UNSPECIFIED;
 
     pos = af_rpc_get_uint32_from_buffer_at_pos(&attrId, rxBuf, rxSize, pos);
     if (pos < 0) {
@@ -258,6 +299,7 @@ static void on_get_request(uint8_t *rxBuf, int rxSize, int pos, uint32_t seqNum)
     op_context_t *g = op_pool_alloc();
     if (g == NULL) {
         AFLOG_ERR("handle_get_req_get_alloc::can't allocate get context");
+        status = AF_ATTR_STATUS_NO_SPACE;
         goto error;
     }
 
@@ -266,9 +308,10 @@ static void on_get_request(uint8_t *rxBuf, int rxSize, int pos, uint32_t seqNum)
     g->attrId = attrId;
     g->timeout = timeout;
 
-    g->timeoutEvent = allocate_and_add_timer(sClient->base, g->timeout * 1000, on_attr_get_send_timeout, g);
+    g->timeoutEvent = allocate_and_add_timer(sClient->base, g->timeout * 1000, handle_client_get_send_timeout, g);
     if (g->timeoutEvent == NULL) {
         AFLOG_ERR("handle_get_request_timer::");
+        status = AF_ATTR_STATUS_NO_SPACE;
         goto error;
     }
 
@@ -289,10 +332,10 @@ error:
         op_cleanup(&sGetsToSend, g);
     }
     {
-        /* send an unspecified error packet back */
+        /* send an error packet back */
         uint8_t buf[30];
         af_rpc_param_t params[2];
-        AF_RPC_SET_PARAM_AS_UINT8(params[0], AF_ATTR_STATUS_UNSPECIFIED);
+        AF_RPC_SET_PARAM_AS_UINT8(params[0], status);
         AF_RPC_SET_PARAM_AS_UINT16(params[1], getId);
         int len = af_rpc_create_buffer_with_params(buf, sizeof(buf), params, ARRAY_SIZE(params));
         if (len >= 0) {
@@ -305,7 +348,11 @@ error:
     }
 }
 
-static void on_set_reply(uint8_t *rxBuf, int rxSize)
+/* This function is called when the attribute daemon responds to a set request from this
+ * client for an attribute it doesn't own. It calls the callback associated with the
+ * client's set request.
+ */
+static void handle_set_reply(uint8_t *rxBuf, int rxSize)
 {
     /* first let's unpack the rpc */
     af_rpc_param_t params[3];
@@ -340,6 +387,19 @@ static void on_set_reply(uint8_t *rxBuf, int rxSize)
     op_cleanup(&sOutstandingSets, o);
 }
 
+/* This function is called when the IPC layer gets an unsolicited message from the
+ * attribute daemon. Unsolicited messages are:
+ *   set reply : the client requested to set an attribute another client owns. The status
+ *               of the set is being returned from the attribute daemon.
+ *   notify    : an attribute the client is interested in has been set. A transaction
+ *               containing the new value is being received from the attribute daemon.
+ *   set       : another client is requesting to set an attribute that the client owns to
+ *               a new value. A transaction containing the new value is being received
+ *               from the attribute daemon.
+ *   get reply : the client has requested the value of an attribute another client owns.
+ *               A transaction containing the requested value is being received from the
+ *               attribute daemon.
+ */
 static void unsol_callback (int status, uint32_t seqNum, uint8_t *rxBuf, int rxSize, void *context)
 {
     AFLOG_DEBUG3("unsol_callback");
@@ -356,7 +416,7 @@ static void unsol_callback (int status, uint32_t seqNum, uint8_t *rxBuf, int rxS
             /* this is unsolicited */
             switch(opcode) {
                 case AF_ATTR_OP_SET_REPLY :
-                    on_set_reply(rxBuf, rxSize);
+                    handle_set_reply(rxBuf, rxSize);
                     break;
                 default :
                     AFLOG_ERR("unsol_callback_unsol:opcode=%d:unknown unsolicited opcode", opcode);
@@ -368,10 +428,10 @@ static void unsol_callback (int status, uint32_t seqNum, uint8_t *rxBuf, int rxS
                 case AF_ATTR_OP_NOTIFY :
                 case AF_ATTR_OP_SET :
                 case AF_ATTR_OP_GET_REPLY :
-                    on_transaction(rxBuf, rxSize, seqNum, opcode);
+                    handle_transaction(rxBuf, rxSize, seqNum, opcode);
                     break;
                 case AF_ATTR_OP_GET :
-                    on_get_request(rxBuf, rxSize, pos, seqNum);
+                    handle_get_request(rxBuf, rxSize, pos, seqNum);
                     break;
                 default :
                     AFLOG_ERR("unsol_callback_opcode:opcode=%d:unhandled request", opcode);
@@ -495,7 +555,14 @@ exit:
     return status;
 }
 
-static void on_transmit_finished(int status, void *trans, void *context)
+/***************************************************************************************************************
+ * Attribute Set
+ */
+
+/* This function is called when the a set transaction initiated using af_attr_set is
+ * complete. It cleans up the transaction.
+ */
+static void handle_set_finished(int status, void *trans, void *context)
 {
     if (trans) {
         trans_context_t *t = (trans_context_t *)trans;
@@ -503,13 +570,21 @@ static void on_transmit_finished(int status, void *trans, void *context)
     }
 }
 
+/* This callback is used to send a request for the IPC client. The IPC server and IPC
+ * client APIs are slightly different while the transaction transmit and receive functions
+ * defined in attr_common.c are generic for client and server. Therefore we need this
+ * callback is to provide a generic function to send a request to the attribute daemon.
+ */
 static int send_request(uint16_t clientId, uint8_t *buf, int bufSize, af_ipc_receive_callback_t receive, void *context, int timeoutMs)
 {
     return af_ipcc_send_request(sClient->server, buf, bufSize, receive, context, timeoutMs);
 }
 
-
-static void on_attr_set_timeout(evutil_socket_t fd, short what, void *context)
+/* This function is called when an attribute set request initiated using the af_attr_set
+ * call fails to complete within SET_TIMEOUT seconds. It calls the set callback associated
+ * with the set request and cleans up the outstanding set context.
+ */
+static void handle_set_timeout(evutil_socket_t fd, short what, void *context)
 {
     if (context != NULL) {
         op_context_t *s = (op_context_t *)context;
@@ -521,6 +596,7 @@ static void on_attr_set_timeout(evutil_socket_t fd, short what, void *context)
     }
 }
 
+/* Public client function to set the value of an attribute */
 int af_attr_set (uint32_t attributeId, uint8_t *value, int length, af_attr_set_response_callback_t setCB, void *setContext)
 {
     int status = AF_ATTR_STATUS_OK;
@@ -550,7 +626,7 @@ int af_attr_set (uint32_t attributeId, uint8_t *value, int length, af_attr_set_r
     s->next = sOutstandingSets;
     sOutstandingSets = s;
 
-    s->timeoutEvent = allocate_and_add_timer(sClient->base, s->timeout * 1000, on_attr_set_timeout, s);
+    s->timeoutEvent = allocate_and_add_timer(sClient->base, s->timeout * 1000, handle_set_timeout, s);
     if (s->timeoutEvent == NULL) {
         AFLOG_ERR("handle_set_request_timer::");
         goto error;
@@ -574,7 +650,7 @@ int af_attr_set (uint32_t attributeId, uint8_t *value, int length, af_attr_set_r
     t->opId = s->opId;
 
     AFLOG_DEBUG3("af_attr_set:transmit_transId=%d", t->transId);
-    status = trans_transmit(0, t, send_request, on_transmit_finished, NULL);
+    status = trans_transmit(0, t, send_request, handle_set_finished, NULL);
 
     if (status != 0) {
         /* trans_transmit calls the finish callback on failure */
@@ -594,11 +670,20 @@ error:
     return status;
 }
 
-static void on_attr_get_timeout(evutil_socket_t fd, short what, void *context)
+/***************************************************************************************************************
+ * Attribute Get
+ */
+
+/* This function is called when the client requests the value of an attribute with the
+ * af_attr_get function and the value for the attribute has not been received within
+ * the get timeout for the attribute (specified in af_attr_def.h). This function calls
+ * the get callback with a failure status and cleans up the associated get context.
+ */
+static void handle_get_timeout(evutil_socket_t fd, short what, void *context)
 {
     if (context != NULL) {
         op_context_t *g = (op_context_t *)context;
-        AFLOG_ERR("on_attr_get_timeout:getId=%d", g->opId);
+        AFLOG_ERR("handle_get_timeout:getId=%d", g->opId);
         if (g->u.c.callback) {
             ((af_attr_get_response_callback_t)(g->u.c.callback))
                 (AF_ATTR_STATUS_TIMEOUT, g->attrId, NULL, 0, g->u.c.context);
@@ -607,7 +692,13 @@ static void on_attr_get_timeout(evutil_socket_t fd, short what, void *context)
     }
 }
 
-static void on_attr_get_response(int status, uint32_t seqNum, uint8_t *rxBuf, int rxSize, void *context)
+/* This function is called when the attribute daemon responds to a client's get request
+ * using the af_attr_get function. The get response can have two forms:
+ *   fat get: The get response contains the attribute value
+ *   get:     The get response does not contain the attribute value. The value will
+ *            be sent by the attribute daemon in a subsequent transaction.
+ */
+static void handle_get_response(int status, uint32_t seqNum, uint8_t *rxBuf, int rxSize, void *context)
 {
     /* context points to the op_context_t */
     if (context == NULL) {
@@ -620,14 +711,14 @@ static void on_attr_get_response(int status, uint32_t seqNum, uint8_t *rxBuf, in
     int len;
 
     if (status != 0) {
-        AFLOG_ERR("on_attr_get_response_resp_status:status=%d", status);
+        AFLOG_ERR("handle_get_response_resp_status:status=%d", status);
         rStatus = (status == AF_IPC_STATUS_TIMEOUT ? AF_ATTR_STATUS_TIMEOUT : AF_ATTR_STATUS_UNSPECIFIED);
         goto error;
     }
 
     /* note that here we are getting the response to the get request and not the attribute itself */
     if (rxBuf == NULL || rxSize <= 0) {
-        AFLOG_ERR("on_attr_get_response_param:rxBuf_null=%d, size=%d",
+        AFLOG_ERR("handle_get_response_param:rxBuf_null=%d, size=%d",
                   rxBuf == NULL, rxSize);
         rStatus = AF_ATTR_STATUS_UNSPECIFIED;
         goto error;
@@ -638,14 +729,14 @@ static void on_attr_get_response(int status, uint32_t seqNum, uint8_t *rxBuf, in
     /* parse incoming message */
     len = af_rpc_get_params_from_buffer(params, ARRAY_SIZE(params), rxBuf, rxSize, AF_RPC_PERMISSIVE);
     if (len < 0) {
-        AFLOG_ERR("on_attr_get_resp_rpc:len=%d:", len);
+        AFLOG_ERR("handle_get_resp_rpc:len=%d:", len);
         rStatus = AF_ATTR_STATUS_UNSPECIFIED;
         goto error;
     }
 
     /* make sure we have at least two parameters */
     if (len < 2) {
-        AFLOG_ERR("on_attr_get_resp_num_params:len=%d:", len);
+        AFLOG_ERR("handle_get_resp_num_params:len=%d:", len);
         rStatus = AF_ATTR_STATUS_UNSPECIFIED;
         goto error;
     }
@@ -653,13 +744,13 @@ static void on_attr_get_response(int status, uint32_t seqNum, uint8_t *rxBuf, in
     if (params[0].type == AF_RPC_TYPE_UINT8) {
         rStatus = AF_RPC_GET_UINT8_PARAM(params[0]);
     } else {
-        AFLOG_ERR("on_attr_get_resp_param0_type:type=%d", params[0].type);
+        AFLOG_ERR("handle_get_resp_param0_type:type=%d", params[0].type);
         rStatus = AF_ATTR_STATUS_UNSPECIFIED;
         goto error;
     }
 
     if (rStatus != AF_ATTR_STATUS_OK) {
-        AFLOG_ERR("on_attr_get_resp_status:rStatus=%d:", rStatus);
+        AFLOG_ERR("handle_get_resp_status:rStatus=%d:", rStatus);
         goto error;
     }
 
@@ -668,22 +759,22 @@ static void on_attr_get_response(int status, uint32_t seqNum, uint8_t *rxBuf, in
     if (params[1].type == AF_RPC_TYPE_UINT16) {
         getId = AF_RPC_GET_UINT16_PARAM(params[1]);
     } else {
-        AFLOG_ERR("on_attr_get_resp_param1_type:type=%d", params[1].type);
+        AFLOG_ERR("handle_get_resp_param1_type:type=%d", params[1].type);
         rStatus = AF_ATTR_STATUS_UNSPECIFIED;
         goto error;
     }
 
-    AFLOG_DEBUG3("on_attr_get_response:status=%d,getId=%d", status, getId);
+    AFLOG_DEBUG3("handle_get_response:status=%d,getId=%d", status, getId);
 
     /* check if we have a fat get */
     if (getId == 0) {
         if (len != 3) {
-            AFLOG_ERR("on_attr_get_resp_fat_get_param:getId=%d,len=%d:fat get has incorrect number of parameters", getId, len);
+            AFLOG_ERR("handle_get_resp_fat_get_param:getId=%d,len=%d:fat get has incorrect number of parameters", getId, len);
             status = AF_ATTR_STATUS_UNSPECIFIED;
             goto error;
         }
         if (!AF_RPC_TYPE_IS_BLOB(params[2].type)) {
-            AFLOG_ERR("on_attr_get_resp_fat_get_param2_type:type=%d", params[2].type);
+            AFLOG_ERR("handle_get_resp_fat_get_param2_type:type=%d", params[2].type);
             status = AF_ATTR_STATUS_UNSPECIFIED;
             goto error;
         }
@@ -702,9 +793,9 @@ static void on_attr_get_response(int status, uint32_t seqNum, uint8_t *rxBuf, in
         op_cleanup(&sRequestedGets,g);
     } else {
         /* we got a good response; now set timeout and wait for transaction containing actual attribute */
-        g->timeoutEvent = allocate_and_add_timer(sClient->base, g->timeout * 1000, on_attr_get_timeout, g);
+        g->timeoutEvent = allocate_and_add_timer(sClient->base, g->timeout * 1000, handle_get_timeout, g);
         if (g->timeoutEvent == NULL) {
-            AFLOG_ERR("on_attr_get_response_timer::");
+            AFLOG_ERR("handle_get_response_timer::");
             rStatus = AF_ATTR_STATUS_NO_SPACE;
             goto error;
         }
@@ -721,6 +812,7 @@ error:
     op_cleanup(&sRequestedGets,g);
 }
 
+/* Public function to get the value of an attribute */
 int af_attr_get (uint32_t attributeId, af_attr_get_response_callback_t cb, void *context)
 {
     int status = AF_ATTR_STATUS_OK;
@@ -765,7 +857,7 @@ int af_attr_get (uint32_t attributeId, af_attr_get_response_callback_t cb, void 
         goto error;
     }
 
-    if (af_ipcc_send_request(sClient->server, buf, len, on_attr_get_response, g, timeout * 1000) < 0) {
+    if (af_ipcc_send_request(sClient->server, buf, len, handle_get_response, g, timeout * 1000) < 0) {
         AFLOG_ERR("af_attr_get_send:errno=%d:can't send get request", errno);
         status = AF_ATTR_STATUS_UNSPECIFIED;
         goto error;
@@ -787,6 +879,9 @@ static void on_get_attribute_finished(int status, void *trans, void *context)
     }
 }
 
+/* Public function to allow the client to send the requested value of an attribute it
+ * owns.
+ */
 int af_attr_send_get_response (int status, uint16_t getId, uint8_t *value, int length)
 {
     if (sClient == NULL) {
@@ -891,7 +986,9 @@ void af_attr_close (void)
     op_pool_deinit();
 }
 
-/* code to store and retrieve attributes in Little Endian */
+/***************************************************************************************************************
+ * Code to store and retrieve attributes in Little Endian
+ */
 void af_attr_store_uint16(uint8_t *dst, uint16_t value)
 {
     if (dst == NULL) {

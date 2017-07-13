@@ -1,7 +1,7 @@
 /*
  * file attr_prv.h -- definitions common between attribute API and attribute daemon
  *
- * Copyright (c) 2016 Afero, Inc. All rights reserved.
+ * Copyright (c) 2016-2017 Afero, Inc. All rights reserved.
  *
  */
 #ifndef __AF_ATTR_PRV_H__
@@ -94,8 +94,17 @@
  *
  */
 
-/* transaction definitions */
-#define MAX_SIZE_FOR_INTERNAL_DATA (4)
+/* reference counted memory used for notification transactions */
+/* if you need to free this in an exceptional case, use free() */
+typedef struct {
+    uint16_t refCount;
+    uint16_t size;
+    uint32_t attrId;
+    uint8_t *value;
+} attr_value_t;
+attr_value_t *attr_value_create(uint32_t attributeId, uint16_t size);
+void attr_value_inc_ref_count(attr_value_t *aValue);
+void attr_value_dec_ref_count(attr_value_t *aValue);
 
 /* defined trans as a void * to avoid compiler warning */
 typedef void (*finished_callback_t)(int status, void *trans, void *context);
@@ -121,22 +130,15 @@ typedef struct trans_context_struct { // this structure does not support transmi
     uint16_t pad2;
     uint16_t transId;
     uint16_t opId;
-    uint16_t size;
     uint16_t pos;
-    uint32_t attrId;
-    union {
-        void *dataP;
-        uint8_t data[MAX_SIZE_FOR_INTERNAL_DATA];
-    } u;
+    attr_value_t *attrValue;
     union {
         trans_rx_context_t rxc;
         trans_tx_context_t txc;
-    } u2;
+    } u;
     struct trans_context_struct *next;
 } trans_context_t;
 
-/* get a valid transaction id */
-uint16_t get_trans_id(void);
 /* allocate a pool of transactions */
 int trans_pool_init(uint16_t maxTransactions);
 /* get a transaction from the pool */
@@ -154,25 +156,6 @@ void trans_add(trans_context_t **head, trans_context_t *t);
 trans_context_t *trans_find_transaction_with_id(trans_context_t **head, uint16_t id);
 /* removes transaction from specified list */
 int trans_remove(trans_context_t **head, trans_context_t *trans);
-
-/* reference counted memory used for notification transactions */
-typedef void *trans_mem_t;
-trans_mem_t *trans_mem_create(uint8_t *value);
-void trans_mem_inc_ref_count(trans_mem_t *mem);
-void trans_mem_dec_ref_count(trans_mem_t *mem);
-void *trans_mem_get_value(trans_mem_t *mem);
-
-
-/* create RPC for transaction; returns RPC message length */
-int trans_rpc_create_rpc_for_transmit(uint8_t *buf, int bufSize, trans_context_t *t);
-
-/* create RPC transaction for receive; returns RPC message length */
-int trans_rpc_create_rpc_for_receive(uint8_t *buf, int bufSize, uint8_t status, uint16_t transId);
-
-/* read an attribute RPC message */
-int trans_rpc_read_received_rpc(uint8_t *buf, int bufSize, trans_context_t *t, uint8_t **blob, uint16_t *blobSize);
-
-typedef int (*trans_check_callback_t)(struct trans_context_struct *trans, void *context);
 
 /* receive an attribute packet
  *
@@ -217,7 +200,7 @@ typedef struct server_get_op_context_struct {
 } server_get_op_context_t;
 
 typedef struct server_set_op_context_struct {
-    trans_context_t *trans;
+    attr_value_t *attrValue;
     uint16_t clientOpId;
     uint16_t clientId;
 } server_set_op_context_t;

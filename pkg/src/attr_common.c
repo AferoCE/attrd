@@ -1,7 +1,7 @@
 /*
  * file attr_common.c -- implementation of client/server common code
  *
- * Copyright (c) 2016 Afero, Inc. All rights reserved.
+ * Copyright (c) 2016-2017 Afero, Inc. All rights reserved.
  *
  */
 #include <stdint.h>
@@ -13,11 +13,49 @@
 #include "af_rpc.h"
 #include "af_log.h"
 
+/* attribute value API */
+attr_value_t *attr_value_create(uint32_t attributeId, uint16_t size)
+{
+    attr_value_t *retVal = (attr_value_t *)calloc(1, size + sizeof(attr_value_t));
+    if (retVal == NULL) {
+        return NULL;
+    }
+    retVal->refCount = 1;
+    retVal->size = size;
+    retVal->attrId = attributeId;
+    retVal->value = ((uint8_t *)retVal) + sizeof(attr_value_t);
+    return retVal;
+}
+
+void attr_value_inc_ref_count(attr_value_t *aValue)
+{
+    if (aValue != NULL) {
+        aValue->refCount++;
+        AFLOG_DEBUG3("attr_value_inc_ref:attrValueP=%p,count=%d", aValue, aValue->refCount);
+    }
+}
+
+void attr_value_dec_ref_count(attr_value_t *aValue)
+{
+    if (aValue != NULL) {
+        if (aValue->refCount == 0) {
+            AFLOG_ERR("attr_value_ref_0:attrValueP=%p,refcount=0", aValue);
+            return;
+        }
+        aValue->refCount--;
+        AFLOG_DEBUG3("attr_value_dec_ref:attrValueP=%p,count=%d", aValue, aValue->refCount);
+        if (aValue->refCount == 0) {
+            free(aValue);
+            AFLOG_DEBUG3("Freed attr_value at %p", aValue);
+        }
+    }
+}
+
 /* transaction API */
 
-uint16_t sTransId = 1; // Valid transaction IDs can not be zero
+static uint16_t sTransId = 1; // Valid transaction IDs can not be zero
 
-uint16_t get_trans_id(void)
+static uint16_t trans_new_id(void)
 {
     uint16_t retVal = sTransId;
     sTransId++;
@@ -78,64 +116,6 @@ void trans_pool_free(trans_context_t *trans)
     }
 }
 
-/* initialize RPC based on transaction */
-
-typedef struct {
-    uint8_t *value;
-    uint32_t refCount;
-} trans_mem_prv_t;
-
-trans_mem_t *trans_mem_create(uint8_t *value)
-{
-    if (value == NULL) {
-        errno = EINVAL;
-        return NULL;
-    }
-
-    trans_mem_prv_t *retVal = (trans_mem_prv_t *)malloc(sizeof(trans_mem_prv_t));
-    if (retVal == NULL) {
-        return NULL;
-    }
-    retVal->value = value;
-    retVal->refCount = 0;
-    return (trans_mem_t *)retVal;
-}
-
-void trans_mem_inc_ref_count(trans_mem_t *mem)
-{
-    if (mem != NULL) {
-        trans_mem_prv_t *tm = (trans_mem_prv_t *)mem;
-        tm->refCount++;
-        AFLOG_DEBUG3("reference count for %p is %d", mem, tm->refCount);
-    }
-}
-
-
-void trans_mem_dec_ref_count(trans_mem_t *mem)
-{
-    if (mem != NULL) {
-        trans_mem_prv_t *tm = (trans_mem_prv_t *)mem;
-        tm->refCount--;
-        AFLOG_DEBUG3("reference count for %p is %d", mem, tm->refCount);
-        if (tm->refCount == 0) {
-            free(tm->value);
-            free(tm);
-            AFLOG_DEBUG3("Freed trans_mem at %p", mem);
-        }
-    }
-}
-
-void *trans_mem_get_value(trans_mem_t *mem)
-{
-    if (mem == NULL) {
-        return NULL;
-    }
-
-    trans_mem_prv_t *tm = (trans_mem_prv_t *)mem;
-    return tm->value;
-}
-
-
 void trans_add(trans_context_t **head, trans_context_t *t)
 {
     if (head != NULL) {
@@ -184,7 +164,7 @@ int trans_remove(trans_context_t **head, trans_context_t *trans)
 }
 
 
-int trans_rpc_create_rpc_for_transmit(uint8_t *buf, int bufSize, trans_context_t *t)
+static int trans_rpc_create_rpc_for_transmit(uint8_t *buf, int bufSize, trans_context_t *t)
 {
     if (buf == NULL || t == NULL || bufSize <= 0) {
         AFLOG_ERR("create_rpc_for_xmit_param:buf_null=%d,t_null=%d,bufSize=%d:",
@@ -192,10 +172,10 @@ int trans_rpc_create_rpc_for_transmit(uint8_t *buf, int bufSize, trans_context_t
         return AF_RPC_ERR_BAD_PARAM;
     }
 
-    if (t->pos == t->size) {
+    if (t->pos == t->attrValue->size) {
         return 0; // zero length indicates we're done
-    } else if (t->pos > t->size) {
-        AFLOG_ERR("create_rpc_for_xmit_pos:pos=%d,size=%d:", t->pos, t->size);
+    } else if (t->pos > t->attrValue->size) {
+        AFLOG_ERR("create_rpc_for_xmit_pos:pos=%d,size=%d:", t->pos, t->attrValue->size);
         return AF_RPC_ERR_BAD_PARAM;
     }
 
@@ -203,25 +183,17 @@ int trans_rpc_create_rpc_for_transmit(uint8_t *buf, int bufSize, trans_context_t
     AF_RPC_SET_PARAM_AS_UINT8(params[0], t->opcode);
     AF_RPC_SET_PARAM_AS_UINT16(params[1], t->transId);
     AF_RPC_SET_PARAM_AS_UINT16(params[2], t->opId);
-    AF_RPC_SET_PARAM_AS_UINT32(params[3], t->attrId);
-    AF_RPC_SET_PARAM_AS_UINT16(params[4], t->size);
+    AF_RPC_SET_PARAM_AS_UINT32(params[3], t->attrValue->attrId);
+    AF_RPC_SET_PARAM_AS_UINT16(params[4], t->attrValue->size);
     AF_RPC_SET_PARAM_AS_UINT16(params[5], t->pos);
 
-    uint16_t bytesToSend = t->size - t->pos;
+    uint16_t bytesToSend = t->attrValue->size - t->pos;
     if (bytesToSend > MAX_SEND_BLOB_SIZE) {
         bytesToSend = MAX_SEND_BLOB_SIZE;
     }
 
     /* if it's a set, the data is stored directly, otherwise it's reference counted */
-    if (t->size > MAX_SIZE_FOR_INTERNAL_DATA) {
-        if (t->opcode == AF_ATTR_OP_NOTIFY) {
-            AF_RPC_SET_PARAM_AS_BLOB(params[6], trans_mem_get_value(t->u.dataP) + t->pos, bytesToSend);
-        } else {
-            AF_RPC_SET_PARAM_AS_BLOB(params[6], t->u.dataP + t->pos, bytesToSend);
-        }
-    } else {
-        AF_RPC_SET_PARAM_AS_BLOB(params[6], t->u.data, bytesToSend);
-    }
+    AF_RPC_SET_PARAM_AS_BLOB(params[6], t->attrValue->value + t->pos, bytesToSend);
 
     AFLOG_DEBUG3("trans_rpc_create:pos=%d,bytesToSend=%d", t->pos, bytesToSend);
     int retVal = af_rpc_create_buffer_with_params(buf, bufSize, params, ARRAY_SIZE(params));
@@ -230,7 +202,7 @@ int trans_rpc_create_rpc_for_transmit(uint8_t *buf, int bufSize, trans_context_t
     return retVal;
 }
 
-int trans_rpc_create_rpc_for_receive(uint8_t *buf, int bufSize, uint8_t status, uint16_t transId)
+static int trans_rpc_create_rpc_for_receive(uint8_t *buf, int bufSize, uint8_t status, uint16_t transId)
 {
     if (buf == NULL || bufSize <= 0) {
         AFLOG_ERR("create_rpc_for_rx_param:buf_null=%d,bufSize=%d:", buf == NULL, bufSize);
@@ -245,54 +217,16 @@ int trans_rpc_create_rpc_for_receive(uint8_t *buf, int bufSize, uint8_t status, 
     return retVal;
 }
 
-int trans_rpc_read_received_rpc(uint8_t *buf, int bufSize, trans_context_t *t, uint8_t **blob, uint16_t *blobSize)
-{
-    if (buf == NULL || bufSize <= 0 || t == NULL || blob == NULL || blobSize == NULL) {
-        AFLOG_ERR("read_tx_rpc_param:buf_null=%d,bufSize=%d,t_null=%d,blob_null=%d,blobSize_null=%d:",
-                  buf == NULL, bufSize, t == NULL, blob == NULL, blobSize == NULL);
-        return AF_RPC_ERR_BAD_PARAM;
-    }
-
-    memset(t, 0, sizeof(trans_context_t));
-
-    af_rpc_param_t params[7];
-    params[0].type = AF_RPC_TYPE_UINT8;   // opcode
-    params[1].type = AF_RPC_TYPE_UINT16;  // transId
-    params[2].type = AF_RPC_TYPE_UINT16;  // opId
-    params[3].type = AF_RPC_TYPE_UINT32;  // attrId
-    params[4].type = AF_RPC_TYPE_UINT16;  // size
-    params[5].type = AF_RPC_TYPE_UINT16;  // pos
-    params[6].type = AF_RPC_TYPE_BLOB(0); // blob
-
-    int status = af_rpc_get_params_from_buffer(params, ARRAY_SIZE(params), buf, bufSize, AF_RPC_STRICT);
-    if (status < 0) {
-        AFLOG_ERR("read_tx_rpc_opcode_status:status=%d:", status);
-        return status;
-    }
-
-    t->opcode  = AF_RPC_GET_UINT8_PARAM(params[0]);
-    t->transId = AF_RPC_GET_UINT16_PARAM(params[1]);
-    t->opId    = AF_RPC_GET_UINT16_PARAM(params[2]);
-    t->attrId  = AF_RPC_GET_UINT32_PARAM(params[3]);
-    t->size    = AF_RPC_GET_UINT16_PARAM(params[4]);
-    t->pos     = AF_RPC_GET_UINT16_PARAM(params[5]);
-
-    *blob = params[6].base;
-    *blobSize = AF_RPC_BLOB_SIZE(params[6].type);
-
-    return 0;
-}
-
 #define TRANSACTION_TIMEOUT           (4000)
 
 static void trans_cleanup_rx(trans_context_t **head, trans_context_t *t)
 {
     if (t != NULL) {
         /* cancel the timer, if it exists */
-        if (t->u2.rxc.timeoutEvent) {
-            evtimer_del(t->u2.rxc.timeoutEvent);
-            event_free(t->u2.rxc.timeoutEvent);
-            t->u2.rxc.timeoutEvent = NULL;
+        if (t->u.rxc.timeoutEvent) {
+            evtimer_del(t->u.rxc.timeoutEvent);
+            event_free(t->u.rxc.timeoutEvent);
+            t->u.rxc.timeoutEvent = NULL;
         }
 
         /* remove the transaction from the list, if it's there */
@@ -307,15 +241,9 @@ static void trans_cleanup_rx(trans_context_t **head, trans_context_t *t)
 void trans_cleanup(trans_context_t *t)
 {
     if (t != NULL) { /* we have a transaction context */
-        /* free the memory associated with the transaction */
-        if (t->size > MAX_SIZE_FOR_INTERNAL_DATA && t->u.dataP) {
-            if (t->opcode == AF_ATTR_OP_NOTIFY) {
-                trans_mem_dec_ref_count(t->u.dataP);
-            } else {
-                free(t->u.dataP);
-            }
-            t->u.dataP = NULL;
-        }
+        /* decrement the ref count for the attribute value */
+        attr_value_dec_ref_count(t->attrValue);
+
         /* free the transaction */
         trans_pool_free(t);
     }
@@ -327,7 +255,7 @@ static void on_receive_timeout(evutil_socket_t fd, short what, void *arg)
     trans_context_t *trans = (trans_context_t *)arg;
 
     if (trans != NULL) {
-        trans_cleanup_rx(trans->u2.rxc.head, trans);
+        trans_cleanup_rx(trans->u.rxc.head, trans);
     }
 }
 
@@ -338,10 +266,10 @@ int trans_receive_packet(uint8_t *buf, int bufSize,
                          struct event_base *base,
                          send_response_callback_t sendCB)
 {
-    trans_context_t tRead, *t = NULL;
-    uint8_t *blob;
-    uint16_t blobSize;
+    trans_context_t *t = NULL;
+    attr_value_t *a = NULL;
     uint8_t txBuf[32]; // for status message */
+    uint16_t transId = 0;
     int status, len;
 
     /* check parameters */
@@ -353,82 +281,94 @@ int trans_receive_packet(uint8_t *buf, int bufSize,
     }
 
     /* unpack RPC message */
-    status = trans_rpc_read_received_rpc(buf, bufSize, &tRead, &blob, &blobSize);
+    af_rpc_param_t params[7];
+    params[0].type = AF_RPC_TYPE_UINT8;   // opcode
+    params[1].type = AF_RPC_TYPE_UINT16;  // transId
+    params[2].type = AF_RPC_TYPE_UINT16;  // opId
+    params[3].type = AF_RPC_TYPE_UINT32;  // attrId
+    params[4].type = AF_RPC_TYPE_UINT16;  // size
+    params[5].type = AF_RPC_TYPE_UINT16;  // pos
+    params[6].type = AF_RPC_TYPE_BLOB(0); // blob
+
+    status = af_rpc_get_params_from_buffer(params, ARRAY_SIZE(params), buf, bufSize, AF_RPC_STRICT);
     if (status < 0) {
-        AFLOG_ERR("handle_get_read_rpc:status=%d:", status);
+        AFLOG_ERR("trans_receive_rpc:status=%d:", status);
         status = AF_ATTR_STATUS_BAD_TLV;
         goto exit;
     }
 
+    uint8_t opcode  = AF_RPC_GET_UINT8_PARAM(params[0]);
+    transId = AF_RPC_GET_UINT16_PARAM(params[1]);
+    uint16_t opId    = AF_RPC_GET_UINT16_PARAM(params[2]);
+    uint32_t attrId  = AF_RPC_GET_UINT32_PARAM(params[3]);
+    uint16_t size    = AF_RPC_GET_UINT16_PARAM(params[4]);
+    uint16_t pos     = AF_RPC_GET_UINT16_PARAM(params[5]);
+    uint8_t *blob = params[6].base;
+    uint16_t blobSize = AF_RPC_BLOB_SIZE(params[6].type);
+
     status = AF_ATTR_STATUS_OK;
 
-    /* check if this is a new message */
-    if (tRead.transId == 0) {
-        if (tRead.pos != 0) {
-            AFLOG_ERR("handle_get_transId_pos:pos=%d:", tRead.pos);
+    if (transId == 0) {
+        /* this is a new transaction */
+        /* check if incoming data makes sense */
+        if (pos != 0) {
+            AFLOG_ERR("trans_receive:transId=0,pos=%d:", pos);
             status = AF_ATTR_STATUS_BAD_DATA;
             goto exit;
         }
-        /* allocate a new transaction */
+        if (pos + blobSize > size) {
+            AFLOG_ERR("trans_receive::pos=%d,blobSize=%d,size=%d:", pos, blobSize, size);
+            status = AF_ATTR_STATUS_BAD_DATA;
+            goto exit;
+        }
+
+        /* allocate a new transaction and attribute value object */
         t = trans_pool_alloc();
         if (t == NULL) {
-            AFLOG_ERR("handle_get_alloc_trans:: no get transaction context");
+            AFLOG_ERR("trans_receive_trans_pool_alloc::unable to alloc transaction context");
             status = AF_ATTR_STATUS_TOO_MANY_TRANSACTIONS;
             goto exit;
         }
-        memcpy (t, &tRead, sizeof(tRead));
-
-        /* check the size and position */
-        if (t->pos + blobSize > t->size) {
-            AFLOG_ERR("handle_get_overflow:pos=%d,blobSize=%d,size=%d:", t->pos, blobSize, t->size);
-            status = AF_ATTR_STATUS_BAD_DATA;
+        a = attr_value_create(attrId, size);
+        if (a == NULL) {
+            AFLOG_ERR("trans_receive_attr_value_create::unable to create attribute value");
+            status = AF_ATTR_STATUS_TOO_MANY_TRANSACTIONS;
             goto exit;
         }
-
-        /* allocate a new transaction ID */
-        t->transId = get_trans_id();
-
-        /* allocate space if necessary and copy available data */
-        if (t->size > MAX_SIZE_FOR_INTERNAL_DATA) {
-            /* allocate space for the data */
-            t->u.dataP = calloc(1, t->size);
-            if (t->u.dataP == NULL) {
-                AFLOG_ERR("handle_get_alloc_data::");
-                trans_pool_free(t);
-                status = AF_ATTR_STATUS_NO_SPACE;
-                goto exit;
-            }
-            memcpy(t->u.dataP, blob, blobSize);
-        } else {
-            memcpy (t->u.data, blob, blobSize);
-        }
+        t->attrValue = a; /* so it will get cleaned up correctly */
+        t->opcode = opcode;
+        t->transId = trans_new_id();
+        t->opId = opId;
+        t->pos = pos;
+        memcpy(t->attrValue->value, blob, blobSize);
 
         /* add this transaction to the list head */
         trans_add(head, t);
 
-    } else { // This is an existing transaction
+    } else {
+        /* this is an existing transaction */
         /* find transaction */
-        t = trans_find_transaction_with_id(head, tRead.transId);
+        t = trans_find_transaction_with_id(head, transId);
         if (t == NULL) {
-            AFLOG_ERR("handle_get_not_found:transId=%d:transaction not found", tRead.transId);
+            AFLOG_ERR("handle_get_not_found:transId=%d:transaction not found", transId);
             status = AF_ATTR_STATUS_TRANSACTION_NOT_FOUND;
             goto exit;
         }
         /* check consistency */
-        if (t->size != tRead.size || t->attrId != tRead.attrId) {
-            AFLOG_ERR("handle_get_mismatch:t_size=%d,tRead_size=%d,t_attrId=%u,tRead_attrId=%d:",
-                      t->size, tRead.size, t->attrId, tRead.attrId);
+        if (t->attrValue->size != size || t->attrValue->attrId != attrId) {
+            AFLOG_ERR("handle_get_mismatch:t_size=%d,size=%d,t_attrId=%u,attrId=%d:",
+                      t->attrValue->size, size, t->attrValue->attrId, attrId);
             status = AF_ATTR_STATUS_BAD_DATA;
             goto exit;
         }
         /* check for overflows */
-        if (t->pos + blobSize > t->size) {
-            AFLOG_ERR("handle_get_overflow:pos=%d,blobSize=%d,size=%d:", t->pos, blobSize, t->size);
+        if (t->pos + blobSize > t->attrValue->size) {
+            AFLOG_ERR("handle_get_overflow:pos=%d,blobSize=%d,size=%d:", t->pos, blobSize, t->attrValue->size);
             status = AF_ATTR_STATUS_BAD_DATA;
             goto exit;
         }
         /* grab the new data */
-        memcpy(t->u.dataP + t->pos, blob, blobSize);
+        memcpy(t->attrValue->value + t->pos, blob, blobSize);
     }
 
     AFLOG_DEBUG3("trans_receive_packet:pos=%d,blobSize=%d", t->pos, blobSize);
@@ -437,52 +377,56 @@ int trans_receive_packet(uint8_t *buf, int bufSize,
     t->pos += blobSize;
 
     /* check if we have received the last packet */
-    if (t->pos > t->size) {
+    if (t->pos > t->attrValue->size) {
         /* transmitter sent too much data somehow */
-        AFLOG_ERR("handle_get_overflow:pos=%d,size=%d:", t->pos, t->size);
+        AFLOG_ERR("handle_get_overflow:pos=%d,size=%d:", t->pos, t->attrValue->size);
         status = AF_ATTR_STATUS_BAD_DATA;
         goto exit;
-    } else if (t->pos == t->size) {
+    } else if (t->pos == t->attrValue->size) {
         /* This is the last packet; remove from the pending receive list */
         trans_remove(head, t);
 
         /* remove the timeout event if we created one */
-        if (t->u2.rxc.timeoutEvent != NULL) {
-            evtimer_del(t->u2.rxc.timeoutEvent);
-            event_free(t->u2.rxc.timeoutEvent);
-            t->u2.rxc.timeoutEvent = NULL;
+        if (t->u.rxc.timeoutEvent != NULL) {
+            evtimer_del(t->u.rxc.timeoutEvent);
+            event_free(t->u.rxc.timeoutEvent);
+            t->u.rxc.timeoutEvent = NULL;
         }
     } else {
         /* check if we have a timer already */
-        if (t->u2.rxc.timeoutEvent == NULL) {
+        if (t->u.rxc.timeoutEvent == NULL) {
             /* we did not have a timer; create one */
-            t->u2.rxc.timeoutEvent = evtimer_new(base, on_receive_timeout, t);
-            if (t->u2.rxc.timeoutEvent == NULL) {
+            t->u.rxc.timeoutEvent = evtimer_new(base, on_receive_timeout, t);
+            if (t->u.rxc.timeoutEvent == NULL) {
                 AFLOG_ERR("receive_packet_event_new::");
                 status = AF_ATTR_STATUS_NO_SPACE;
                 goto exit;
             }
         } else {
             /* we had a timer; cancel it */
-            evtimer_del(t->u2.rxc.timeoutEvent);
+            evtimer_del(t->u.rxc.timeoutEvent);
         }
+
+        /* give the callback the head so transaction can be removed */
+        t->u.rxc.head = head;
 
         /* add timeout event to clean up data if the transmitter stops talking */
         struct timeval tv;
         tv.tv_sec = TRANSACTION_TIMEOUT / 1000;
         tv.tv_usec = 1000 * (TRANSACTION_TIMEOUT % 1000);
-        evtimer_add(t->u2.rxc.timeoutEvent, &tv);
+        evtimer_add(t->u.rxc.timeoutEvent, &tv);
     }
 
 exit:
     /* if an error occurred, clean up allocated resources */
-    if (status != 0) {
+    if (status != AF_ATTR_STATUS_OK) {
         trans_cleanup_rx(head, t);
-        t = NULL;
+    } else {
+        *trans = t;
     }
 
     /* send a response message */
-    len = trans_rpc_create_rpc_for_receive(txBuf, sizeof(txBuf), (uint8_t)status, t == NULL ? 0 : t->transId);
+    len = trans_rpc_create_rpc_for_receive(txBuf, sizeof(txBuf), (uint8_t)status, status == AF_ATTR_STATUS_OK ? t->transId : 0);
     if (len < 0) {
         AFLOG_ERR("handle_get_create_rpc:len=%d:", len);
     } else {
@@ -491,7 +435,6 @@ exit:
         }
     }
 
-    *trans = t;
     return status;
 }
 
@@ -508,7 +451,7 @@ void on_transmit_response(int status, uint32_t seqNum, uint8_t *rxBuf, int rxBuf
     }
 
     /* check status of send */
-    if (status != 0) {
+    if (status != AF_IPC_STATUS_OK) {
         AFLOG_ERR("on_trans_tx_resp_status:status=%d:transaction request failed", status);
         goto exit;
     }
@@ -531,14 +474,14 @@ void on_transmit_response(int status, uint32_t seqNum, uint8_t *rxBuf, int rxBuf
 
     /* check status from receiver */
     uint8_t iStatus = AF_RPC_GET_UINT8_PARAM(params[0]);
-    if (iStatus != 0) {
+    if (iStatus != AF_ATTR_STATUS_OK) {
         AFLOG_ERR("on_trans_tx_resp_istatus:iStatus=%d:", iStatus);
         status = iStatus;
         goto exit;
     }
 
     /* all iz well; send next packet */
-    if (t->pos < t->size) {
+    if (t->pos < t->attrValue->size) {
         t->transId = AF_RPC_GET_UINT16_PARAM(params[1]);
         status = trans_transmit_internal(t);
         if (status != 0) {
@@ -553,8 +496,8 @@ void on_transmit_response(int status, uint32_t seqNum, uint8_t *rxBuf, int rxBuf
     status = AF_ATTR_STATUS_OK;
 
 exit:
-    if (t->u2.txc.finishedCB != NULL) {
-        (t->u2.txc.finishedCB) (status, t, t->u2.txc.finishedContext);
+    if (t->u.txc.finishedCB != NULL) {
+        (t->u.txc.finishedCB) (status, t, t->u.txc.finishedContext);
     }
 }
 
@@ -572,16 +515,10 @@ static int trans_transmit_internal (trans_context_t *trans)
         return AF_ATTR_STATUS_UNSPECIFIED;
     }
 
-    if (trans->u2.txc.sendCB != NULL) {
-        if ((trans->u2.txc.sendCB)(trans->u2.txc.clientId, txBuf, len, on_transmit_response, trans, TRANSACTION_TIMEOUT) < 0) {
+    if (trans->u.txc.sendCB != NULL) {
+        if ((trans->u.txc.sendCB)(trans->u.txc.clientId, txBuf, len, on_transmit_response, trans, TRANSACTION_TIMEOUT) < 0) {
             AFLOG_ERR("trans_transmit_send:errno=%d:", errno);
             return AF_ATTR_STATUS_UNSPECIFIED;
-        }
-        /* if this is a notification, increase the reference count */
-        if (trans->opcode == AF_ATTR_OP_NOTIFY) {
-            if (trans->size > MAX_SIZE_FOR_INTERNAL_DATA) {
-                trans_mem_inc_ref_count(trans->u.dataP);
-            }
         }
     }
 
@@ -596,18 +533,18 @@ int trans_transmit(uint16_t clientId, trans_context_t *trans, send_request_callb
         return AF_ATTR_STATUS_BAD_PARAM;
     }
 
-    trans->u2.txc.clientId = clientId;
-    trans->u2.txc.sendCB = sendCB;
-    trans->u2.txc.finishedCB = finishedCB;
-    trans->u2.txc.finishedContext = finishedContext;
+    trans->u.txc.clientId = clientId;
+    trans->u.txc.sendCB = sendCB;
+    trans->u.txc.finishedCB = finishedCB;
+    trans->u.txc.finishedContext = finishedContext;
     trans->transId = 0; /* initialize the transmit Id */
 
     int status = trans_transmit_internal(trans);
 
     /* clean up if transmit failed */
     if (status != 0) {
-        if (trans->u2.txc.finishedCB != NULL) {
-            (trans->u2.txc.finishedCB)(status, trans, trans->u2.txc.finishedContext);
+        if (trans->u.txc.finishedCB != NULL) {
+            (trans->u.txc.finishedCB)(status, trans, trans->u.txc.finishedContext);
         }
     }
     return status;
@@ -615,7 +552,8 @@ int trans_transmit(uint16_t clientId, trans_context_t *trans, send_request_callb
 
 trans_context_t *trans_alloc (uint32_t attributeId, uint8_t opcode, uint8_t *value, int length)
 {
-    trans_context_t *t;
+    trans_context_t *t = NULL;
+    attr_value_t *a = NULL;
 
     if (length <= 0 || length > UINT16_MAX || value == NULL) {
         AFLOG_ERR("af_attr_set_param:length=%d,value_null=%d", length, value == NULL);
@@ -624,34 +562,27 @@ trans_context_t *trans_alloc (uint32_t attributeId, uint8_t opcode, uint8_t *val
 
     t = trans_pool_alloc();
     if (t == NULL) {
-        AFLOG_ERR("af_attr_set_alloc::");
+        AFLOG_ERR("trans_alloc_trans:");
+        return NULL;
+    }
+
+    a = attr_value_create(attributeId, length);
+    if (a == NULL) {
+        AFLOG_ERR("trans_alloc_attr_value:");
+        trans_pool_free(t);
         return NULL;
     }
 
     t->opcode = opcode;
-    t->size = length;
-    t->attrId = attributeId;
-
-    /* allocate space if necessary and copy available data */
-    if (t->size > MAX_SIZE_FOR_INTERNAL_DATA) {
-        /* allocate space for the data */
-        t->u.dataP = calloc(1, t->size);
-        if (t->u.dataP == NULL) {
-            AFLOG_ERR("handle_get_alloc_data::");
-            trans_pool_free(t);
-            return NULL;
-        }
-        memcpy(t->u.dataP, value, length);
-    } else {
-        memcpy(t->u.data, value, length);
-    }
+    t->attrValue = a;
+    memcpy(a->value, value, length);
 
     return t;
 }
 
 
 static uint16_t sGetId = 1;
-static uint16_t get_op_id(void)
+static uint16_t op_new_id(void)
 {
     uint16_t retVal = sGetId;
     sGetId++;
@@ -699,7 +630,7 @@ op_context_t *op_pool_alloc(void)
     if (sOpFree) {
         sOpFree = sOpFree->next;
         memset (retVal, 0, sizeof(op_context_t));
-        retVal->opId = get_op_id();
+        retVal->opId = op_new_id();
         AFLOG_DEBUG2("allocated op:opId=%d", retVal->opId);
     }
     return retVal;
