@@ -79,8 +79,8 @@
     _ATTRDEF(65024, WIFI_ITF_STATE,     0,  5, CONNMGR,    0), \
     _ATTRDEF(65025, WIFI_IPADDR,        0,  5, CONNMGR,    0), \
     _ATTRDEF(65026, WIFI_UPTIME,        0,  5, CONNMGR,    0), \
-    _ATTRDEF(65027, WIFI_DL_DATA_USAGE, 0,  5, WIFISTAD,   0), \
-    _ATTRDEF(65028, WIFI_UL_DATA_USAGE, 0,  5, WIFISTAD,   0), \
+    _ATTRDEF(65027, WIFI_DL_DATA_USAGE, 0,  5, CONNMGR,    0), \
+    _ATTRDEF(65028, WIFI_UL_DATA_USAGE, 0,  5, CONNMGR,    0), \
     _ATTRDEF(65029, WIFI_MAC_ADDR,      0,  5, CONNMGR,    0), \
     _ATTRDEF(65030, WIFI_KEY_MGMT,      0,  5, WIFISTAD,   0), \
     _ATTRDEF(65031, WIFI_GROUP_CIPHER,  0,  5, WIFISTAD,   0), \
@@ -89,11 +89,11 @@
     _ATTRDEF(65034, WAN_RSRP,           0,  5, WAN,        AF_ATTR_FLAG_NOTIFY), \
     _ATTRDEF(65035, WAN_BARS,           0,  5, WAN,        AF_ATTR_FLAG_NOTIFY), \
     _ATTRDEF(65036, WAN_CONTROL,        0,  5, WAN,        0), \
-    _ATTRDEF(65037, WAN_ITF_STATE,      0,  5, WAN,        0), \
-    _ATTRDEF(65038, WAN_IPADDR,         0,  5, WAN,        0), \
-    _ATTRDEF(65039, WAN_UPTIME,         0,  5, WAN,        0), \
-    _ATTRDEF(65040, WAN_DL_DATA_USAGE,  0,  5, WAN,        0), \
-    _ATTRDEF(65041, WAN_UL_DATA_USAGE,  0,  5, WAN,        0), \
+    _ATTRDEF(65037, WAN_ITF_STATE,      0,  5, CONNMGR,    0), \
+    _ATTRDEF(65038, WAN_IPADDR,         0,  5, CONNMGR,    0), \
+    _ATTRDEF(65039, WAN_UPTIME,         0,  5, CONNMGR,    0), \
+    _ATTRDEF(65040, WAN_DL_DATA_USAGE,  0,  5, CONNMGR,    0), \
+    _ATTRDEF(65041, WAN_UL_DATA_USAGE,  0,  5, CONNMGR,    0), \
     _ATTRDEF(65042, WAN_IMEISV,         0,  5, WAN,        0), \
     _ATTRDEF(65043, WAN_IMSI,           0,  5, WAN,        0), \
     _ATTRDEF(65044, WAN_ICCID,          0,  5, WAN,        0), \
@@ -112,11 +112,11 @@
     _ATTRDEF(65057, WAN_UL_BIT_RATE,    0,  5, WAN,        0), \
     _ATTRDEF(65058, ETH_CONTROL,        0,  5, CONNMGR,    AF_ATTR_FLAG_WRITABLE | AF_ATTR_FLAG_NOTIFY), \
     _ATTRDEF(65059, ETH_ITF_STATE,      0,  5, CONNMGR,    0), \
-    _ATTRDEF(65060, ETH_IPADDDR,        0,  5, CONNMGR,    0), \
+    _ATTRDEF(65060, ETH_IPADDR,         0,  5, CONNMGR,    0), \
     _ATTRDEF(65061, ETH_UPTIME,         0,  5, CONNMGR,    0), \
     _ATTRDEF(65062, ETH_DL_DATA_USAGE,  0,  5, CONNMGR,    0), \
     _ATTRDEF(65063, ETH_UL_DATA_USAGE,  0,  5, CONNMGR,    0), \
-    _ATTRDEF(65064, ETH_MAC_ADDRESS,    0,  5, CONNMGR,    0), \
+    _ATTRDEF(65064, ETH_MAC_ADDR,       0,  5, CONNMGR,    0), \
     _ATTRDEF(65065, SYSTEM_TIME,        0,  5, ATTRD,      0), \
 
 #define _ATTRDEF(_attr_id_num,_attr_id_name,_attr_type,_attr_get_timeout,_attr_owner,_attr_flags) AF_ATTR_##_attr_owner##_##_attr_id_name=_attr_id_num
