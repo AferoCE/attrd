@@ -39,8 +39,6 @@
     _ATTRDEF(1100,  SCRATCHWO,          0,  5, ATTRTEST,   AF_ATTR_FLAG_WRITABLE | AF_ATTR_FLAG_NOTIFY), \
     _ATTRDEF(1101,  SCRATCHRO,          0,  5, ATTRTEST,   0), \
     _ATTRDEF(51600, REPORT_RSSI_CHANGES,0,  5, ATTRD,      AF_ATTR_FLAG_WRITABLE | AF_ATTR_FLAG_NOTIFY), \
-    _ATTRDEF(51601, RSRP,               0,  5, WAN,        AF_ATTR_FLAG_NOTIFY), \
-    _ATTRDEF(51602, BARS,               0,  5, WAN,        AF_ATTR_FLAG_NOTIFY), \
     _ATTRDEF(51603, POWER_INFO,         0,  5, WAN,        0), \
     _ATTRDEF(51604, CAMP_INFO,          0,  5, WAN,        0), \
     _ATTRDEF(51605, SERVING_INFO,       0,  5, WAN,        0), \
@@ -88,8 +86,8 @@
     _ATTRDEF(65033, WIFI_HIDDEN_SSID,   0,  5, WIFISTAD,   0), \
     _ATTRDEF(65034, WAN_RSRP,           0,  5, WAN,        AF_ATTR_FLAG_NOTIFY), \
     _ATTRDEF(65035, WAN_BARS,           0,  5, WAN,        AF_ATTR_FLAG_NOTIFY), \
-    _ATTRDEF(65036, WAN_CONTROL,        0,  5, WAN,        0), \
-    _ATTRDEF(65037, WAN_ITF_STATE,      0,  5, CONNMGR,    0), \
+    _ATTRDEF(65036, WAN_CONTROL,        0,  5, WAN,        AF_ATTR_FLAG_WRITABLE | AF_ATTR_FLAG_NOTIFY), \
+    _ATTRDEF(65037, WAN_ITF_STATE,      0,  5, WAN,        0), \
     _ATTRDEF(65038, WAN_IPADDR,         0,  5, CONNMGR,    0), \
     _ATTRDEF(65039, WAN_UPTIME,         0,  5, CONNMGR,    0), \
     _ATTRDEF(65040, WAN_DL_DATA_USAGE,  0,  5, CONNMGR,    0), \
