@@ -966,7 +966,7 @@ int af_attr_send_get_response (int status, uint16_t getId, uint8_t *value, int l
     }
 
     op_cleanup(&sGetsToSend, g);
-    return status;
+    return AF_ATTR_STATUS_OK;
 
 error:
     if (g != NULL) {
