@@ -234,7 +234,7 @@ typedef void (*event_callback_t)(evutil_socket_t fd, short what, void *context);
 struct event *allocate_and_add_timer(struct event_base *b, int timeoutMs, event_callback_t cb, void *context);
 
 /* max blob size */
-#define MAX_SEND_BLOB_SIZE (256)
+#define MAX_SEND_BLOB_SIZE (3968)
 
 /* timeout for attribute set */
 #define SET_TIMEOUT (5)
