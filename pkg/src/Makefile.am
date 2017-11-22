@@ -24,3 +24,7 @@ else
 libaf_attr_a_CFLAGS = -Wall -ggdb3 -std=gnu99 -DNDEBUG
 endif
 
+.PHONY : build_info.h
+$(attrd_SOURCES) : build_info.h
+build_info.h :
+	$(srcdir)/make-build-info.sh $(srcdir)

@@ -1184,6 +1184,9 @@ static void close_callback(void *clientContext)
 #define MAX_TRANSACTIONS (20)
 #define MAX_OPS          (20)
 
+extern const char REVISION[];
+extern const char BUILD_DATE[];
+
 int main(int argc, char *argv[])
 {
     int retVal = 0;
@@ -1191,6 +1194,8 @@ int main(int argc, char *argv[])
     int opPoolStarted = 0;
 
     openlog("attrd", LOG_PID, LOG_USER);
+
+    AFLOG_INFO("start_attrd:revision=%s,build_date=%s", REVISION, BUILD_DATE);
 
     /* enable pthreads */
     evthread_use_pthreads();

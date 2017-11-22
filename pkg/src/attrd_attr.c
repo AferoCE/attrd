@@ -14,6 +14,7 @@
 #include "af_log.h"
 #include "af_attr_client.h"
 #include "attrd_attr.h"
+#include "build_info.h"
 
 static int8_t sReportRssiChanges = 0;
 
@@ -124,7 +125,9 @@ void handle_attrd_get_request(uint32_t seqNum, uint16_t getId, uint32_t attrId)
         case AF_ATTR_ATTRD_REBOOT_REASON :
             handle_reboot_reason_get_request(seqNum, getId);
             break;
-
+        case AF_ATTR_ATTRD_REVISION :
+            send_attrd_get_response(AF_ATTR_STATUS_OK, seqNum, getId, (uint8_t *)REVISION, sizeof(REVISION));
+            break;
         default :
             break;
     }
