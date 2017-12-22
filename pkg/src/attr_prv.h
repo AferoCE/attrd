@@ -205,6 +205,10 @@ typedef struct server_set_op_context_struct {
     uint16_t clientId;
 } server_set_op_context_t;
 
+typedef struct owner_set_op_context_struct {
+    uint16_t opId;
+} owner_set_op_context_t;
+
 typedef struct op_context_struct {
     uint16_t opId;
     uint16_t timeout;
@@ -214,6 +218,7 @@ typedef struct op_context_struct {
         client_op_context_t c;
         server_get_op_context_t sg;
         server_set_op_context_t ss;
+	owner_set_op_context_t o;
     } u;
     struct op_context_struct *next;
 } op_context_t;
@@ -232,6 +237,7 @@ int set_reply_create_rpc(uint8_t status, uint16_t setId, uint8_t *buf, int bufSi
 /* allocate and add a timer for a timeout */
 typedef void (*event_callback_t)(evutil_socket_t fd, short what, void *context);
 struct event *allocate_and_add_timer(struct event_base *b, int timeoutMs, event_callback_t cb, void *context);
+op_context_t *op_alloc_with_timeout(struct event_base *b, uint16_t timeoutSec, event_callback_t cb);
 
 /* max blob size */
 #define MAX_SEND_BLOB_SIZE (3968)

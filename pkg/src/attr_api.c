@@ -47,9 +47,10 @@ static attr_timeout_t sAttrTimeouts[] = {
 static client_t *sClient = NULL;
 static trans_context_t *sReadTrans = NULL;
 
-static op_context_t *sRequestedGets = NULL;
-static op_context_t *sGetsToSend = NULL;
-static op_context_t *sOutstandingSets = NULL;
+static op_context_t *sRequestedGets = NULL;     /* gets that this client requested */
+static op_context_t *sGetsToSend = NULL;        /* gets this client owns but hasn't responded to yet */
+static op_context_t *sRequestedSets = NULL;     /* sets that this client requested */
+static op_context_t *sSetsToSend = NULL;        /* sets this client owns but hasn't responded to yet */
 
 /* returns the timeout for the get operation for the attribute specified by ID */
 static uint16_t get_timeout_for_attribute_id(uint32_t attrId)
@@ -142,6 +143,83 @@ static int send_response(uint32_t seqNum, uint8_t *buf, int bufSize)
     return af_ipcc_send_response(sClient->server, seqNum, buf, bufSize);
 }
 
+/* This callback is called when the owner of an attribute does not respond to the
+ * owner_set callback in time.
+ */
+static void handle_set_owner_timeout(evutil_socket_t fd, short what, void *context)
+{
+    op_context_t *s = op_find(sSetsToSend, (uint16_t)(uint32_t)context);
+    if (s == NULL) {
+        AFLOG_ERR("handle_set_owner_timeout_not_found:opId=%u", (uint32_t)context);
+    } else {
+        AFLOG_ERR("set_owner_no_response:attrId=%d:owner failed to respond to attribute set request; sending status", s->attrId);
+        uint8_t buf[30];
+        int len = set_reply_create_rpc(AF_ATTR_STATUS_TIMEOUT, s->u.o.opId, buf, sizeof(buf));
+        if (len >= 0) {
+            int status = af_ipcc_send_unsolicited(sClient->server, buf, len);
+            if (status != AF_IPC_STATUS_OK) {
+                AFLOG_ERR("handle_set_owner_timeout_ipc:status=%d", status);
+            }
+        } else {
+            AFLOG_ERR("handle_set_owner_timeout_rpc:len=%d", len);
+        }
+
+        op_cleanup(&sSetsToSend, s);
+    }
+}
+
+/* This function calls the owner_set callback when another client attempts to
+ * set an attribute this client owns.
+ */
+static void inform_set_owner(trans_context_t *t)
+{
+    if (t == NULL) {
+        AFLOG_ERR("dispatch_set_request_to_client_param:t_NULL=%d", t==NULL);
+        return;
+    }
+
+    if (g_debugLevel >= 1) {
+        char hexBuf[80];
+        af_util_convert_data_to_hex_with_name("value", t->attrValue->value, t->attrValue->size, hexBuf, sizeof(hexBuf));
+        AFLOG_DEBUG1("client_received_owner_set:attrId=%d:%s", t->attrValue->attrId, hexBuf);
+    }
+
+    /* allocate a set request */
+    op_context_t *s = op_alloc_with_timeout(sClient->base, SET_TIMEOUT, handle_set_owner_timeout);
+    if (s == NULL) {
+        AFLOG_ERR("dispatch_set_request_to_client::can't allocate set context");
+
+        uint8_t buf[30];
+        int len = set_reply_create_rpc(AF_ATTR_STATUS_NO_SPACE, t->opId, buf, sizeof(buf));
+        if (len >= 0) {
+            int status = af_ipcc_send_unsolicited(sClient->server, buf, len);
+            if (status != AF_IPC_STATUS_OK) {
+                AFLOG_ERR("inform_set_owner_ipc:status=%d", status);
+            }
+        } else {
+            AFLOG_ERR("inform_set_owner_rpc:len=%d", len);
+        }
+
+        return;
+    }
+
+    s->attrId = t->attrValue->attrId;
+    s->u.o.opId = t->opId;
+
+    /* add it to the list of client sets */
+    s->next = sSetsToSend;
+    sSetsToSend = s;
+
+    /* call callback */
+    if (sClient->ownerSetCallback) {
+        (sClient->ownerSetCallback)(t->attrValue->attrId,
+                                    s->opId,
+                                    t->attrValue->value,
+                                    t->attrValue->size,
+                                    sClient->context);
+    }
+}
+
 /* This function is called when the client receives a transaction. There are three types
  * of transactions the client can receive:
  *   set:    another client has set an attribute this client owns
@@ -163,28 +241,7 @@ static void handle_transaction(uint8_t *rxBuf, int rxSize, uint32_t seqNum, uint
         if (t != NULL && t->u.rxc.timeoutEvent == NULL) {
             switch (opcode) {
                 case  AF_ATTR_OP_SET :
-                    if (g_debugLevel >= 1) {
-                        char hexBuf[80];
-                        af_util_convert_data_to_hex_with_name("value", t->attrValue->value, t->attrValue->size, hexBuf, sizeof(hexBuf));
-                        AFLOG_DEBUG1("client_received_owner_set:attrId=%d:%s", t->attrValue->attrId, hexBuf);
-                    }
-                    uint8_t setStatus = AF_ATTR_STATUS_NOT_IMPLEMENTED;
-                    if (sClient->ownerSetCallback) {
-                        setStatus = (uint8_t)(sClient->ownerSetCallback)(t->attrValue->attrId,
-                                                                         t->attrValue->value,
-                                                                         t->attrValue->size,
-                                                                         sClient->context);
-                    }
-                    uint8_t txBuf[30];
-                    int len = set_reply_create_rpc(setStatus, t->opId, txBuf, sizeof(txBuf));
-                    if (len < 0) {
-                        AFLOG_ERR("client_set_reply_create_rpc:len=%d:failed to create RPC for set reply", len);
-                    } else {
-                        AFLOG_DEBUG1("client_sending_owner_set_status:attrId=%d,status=%d", t->attrValue->attrId, status);
-                        if (af_ipcc_send_unsolicited(sClient->server, txBuf, len) < 0) {
-                            AFLOG_ERR("client_set_reply_send:errno=%d", errno);
-                        }
-                    }
+                    inform_set_owner(t);
                     break;
 
                 case AF_ATTR_OP_NOTIFY :
@@ -234,14 +291,17 @@ static void handle_transaction(uint8_t *rxBuf, int rxSize, uint32_t seqNum, uint
     }
 }
 
+
 /* This function is called if the client does not reply to the get request callback with a
    call to af_attr_send_get_response call within the get timeout for that attribute
    (defined in af_attr_def.h).
 */
 static void handle_client_get_send_timeout(evutil_socket_t fd, short what, void *context)
 {
-    if (context != NULL) {
-        op_context_t *g = (op_context_t *)context;
+    op_context_t *g = op_find(sGetsToSend, (uint16_t)(uint32_t)context);
+    if (g == NULL) {
+        AFLOG_ERR("handle_client_get_send_timeout_not_found:opId=%u", (uint32_t)context);
+    } else {
         AFLOG_ERR("client_get_response_timeout:getId=%d,attrId=%d", g->opId, g->attrId);
 
         /* send an error packet back */
@@ -296,7 +356,7 @@ static void handle_get_request(uint8_t *rxBuf, int rxSize, int pos, uint32_t seq
     }
 
     /* allocate a get request */
-    op_context_t *g = op_pool_alloc();
+    op_context_t *g = op_alloc_with_timeout(sClient->base, timeout * 1000, handle_client_get_send_timeout);
     if (g == NULL) {
         AFLOG_ERR("handle_get_req_get_alloc::can't allocate get context");
         status = AF_ATTR_STATUS_NO_SPACE;
@@ -306,14 +366,6 @@ static void handle_get_request(uint8_t *rxBuf, int rxSize, int pos, uint32_t seq
     g->u.sg.clientSeqNum = seqNum;
     g->u.sg.clientOpId = getId;
     g->attrId = attrId;
-    g->timeout = timeout;
-
-    g->timeoutEvent = allocate_and_add_timer(sClient->base, g->timeout * 1000, handle_client_get_send_timeout, g);
-    if (g->timeoutEvent == NULL) {
-        AFLOG_ERR("handle_get_request_timer::");
-        status = AF_ATTR_STATUS_NO_SPACE;
-        goto error;
-    }
 
     AFLOG_DEBUG1("client_received_get_req:attrId=%d,getId=%d", attrId, g->opId);
 
@@ -368,7 +420,7 @@ static void handle_set_reply(uint8_t *rxBuf, int rxSize)
     uint16_t setId = AF_RPC_GET_UINT16_PARAM(params[2]);
 
     op_context_t *o;
-    for (o = sOutstandingSets; o; o = o->next) {
+    for (o = sRequestedSets; o; o = o->next) {
         if (o->opId == setId) {
             break;
         }
@@ -384,7 +436,7 @@ static void handle_set_reply(uint8_t *rxBuf, int rxSize)
     if (o->u.c.callback) {
         ((af_attr_set_response_callback_t)(o->u.c.callback))(status, o->attrId, o->u.c.context);
     }
-    op_cleanup(&sOutstandingSets, o);
+    op_cleanup(&sRequestedSets, o);
 }
 
 /* This function is called when the IPC layer gets an unsolicited message from the
@@ -584,15 +636,17 @@ static int send_request(uint16_t clientId, uint8_t *buf, int bufSize, af_ipc_rec
  * call fails to complete within SET_TIMEOUT seconds. It calls the set callback associated
  * with the set request and cleans up the outstanding set context.
  */
-static void handle_set_timeout(evutil_socket_t fd, short what, void *context)
+static void handle_set_daemon_timeout(evutil_socket_t fd, short what, void *context)
 {
-    if (context != NULL) {
-        op_context_t *s = (op_context_t *)context;
+    op_context_t *s = op_find(sRequestedSets, (uint16_t)(uint32_t)context);
+    if (s == NULL) {
+        AFLOG_ERR("handle_set_daemon_timeout_not_found:opId=%u", (uint32_t)context);
+    } else {
         AFLOG_ERR("client_set_response_timeout:setId=%d,attrId=%d", s->opId, s->attrId);
         if (s->u.c.callback) {
             ((af_attr_set_response_callback_t)(s->u.c.callback))(AF_ATTR_STATUS_TIMEOUT, s->attrId, s->u.c.context);
         }
-        op_cleanup(&sOutstandingSets, s);
+        op_cleanup(&sRequestedSets, s);
     }
 }
 
@@ -610,7 +664,7 @@ int af_attr_set (uint32_t attributeId, uint8_t *value, int length, af_attr_set_r
         return AF_ATTR_STATUS_BAD_PARAM;
     }
 
-    s = op_pool_alloc();
+    s = op_alloc_with_timeout(sClient->base, SET_TIMEOUT * 1000, handle_set_daemon_timeout);
     if (s == NULL) {
         AFLOG_ERR("af_attr_set_alloc::can't allocate set context");
         status = AF_ATTR_STATUS_NO_SPACE;
@@ -620,17 +674,10 @@ int af_attr_set (uint32_t attributeId, uint8_t *value, int length, af_attr_set_r
     s->u.c.callback = setCB;
     s->u.c.context = setContext;
     s->attrId = attributeId;
-    s->timeout = SET_TIMEOUT;
 
     /* add to outstanding set list */
-    s->next = sOutstandingSets;
-    sOutstandingSets = s;
-
-    s->timeoutEvent = allocate_and_add_timer(sClient->base, s->timeout * 1000, handle_set_timeout, s);
-    if (s->timeoutEvent == NULL) {
-        AFLOG_ERR("handle_set_request_timer::");
-        goto error;
-    }
+    s->next = sRequestedSets;
+    sRequestedSets = s;
 
     if (g_debugLevel >= 1) {
         char hexBuf[80];
@@ -661,13 +708,44 @@ int af_attr_set (uint32_t attributeId, uint8_t *value, int length, af_attr_set_r
 
 error:
     if (s) {
-        op_cleanup(&sOutstandingSets, s);
+        op_cleanup(&sRequestedSets, s);
     }
 
     if (t) {
         trans_cleanup(t);
     }
     return status;
+}
+
+
+int af_attr_send_set_response(int status, uint16_t setId)
+{
+    if (status < 0) {
+        AFLOG_ERR("af_attr_send_set_response_status:status=%d", status);
+        return AF_ATTR_STATUS_BAD_PARAM;
+    }
+
+    op_context_t *s = op_find(sSetsToSend, setId);
+    if (s == NULL) {
+        AFLOG_ERR("af_attr_send_set_response_setId_not_found:setId=%d", setId);
+        return AF_ATTR_STATUS_BAD_PARAM;
+    }
+
+    uint8_t txBuf[30];
+    int len = set_reply_create_rpc(status, s->u.o.opId, txBuf, sizeof(txBuf));
+    if (len < 0) {
+        AFLOG_ERR("client_set_reply_create_rpc:len=%d:failed to create RPC for set reply", len);
+        return AF_ATTR_STATUS_UNSPECIFIED;
+    } else {
+        AFLOG_DEBUG1("client_sending_owner_set_status:attrId=%d,status=%d", s->attrId, status);
+        if (af_ipcc_send_unsolicited(sClient->server, txBuf, len) < 0) {
+            AFLOG_ERR("client_set_reply_send:errno=%d", errno);
+            return AF_ATTR_STATUS_UNSPECIFIED;
+        }
+    }
+
+    op_cleanup(&sSetsToSend, s);
+    return AF_ATTR_STATUS_OK;
 }
 
 /***************************************************************************************************************
@@ -681,14 +759,16 @@ error:
  */
 static void handle_get_timeout(evutil_socket_t fd, short what, void *context)
 {
-    if (context != NULL) {
-        op_context_t *g = (op_context_t *)context;
+    op_context_t *g = op_find(sRequestedGets, (uint16_t)(uint32_t)context);
+    if (g != NULL) {
         AFLOG_ERR("handle_get_timeout:getId=%d", g->opId);
         if (g->u.c.callback) {
             ((af_attr_get_response_callback_t)(g->u.c.callback))
                 (AF_ATTR_STATUS_TIMEOUT, g->attrId, NULL, 0, g->u.c.context);
         }
         op_cleanup(&sRequestedGets, g);
+    } else {
+        AFLOG_ERR("handle_get_timeout_not_found:opId=%u", (uint32_t)context);
     }
 }
 
@@ -793,7 +873,7 @@ static void handle_get_response(int status, uint32_t seqNum, uint8_t *rxBuf, int
         op_cleanup(&sRequestedGets,g);
     } else {
         /* we got a good response; now set timeout and wait for transaction containing actual attribute */
-        g->timeoutEvent = allocate_and_add_timer(sClient->base, g->timeout * 1000, handle_get_timeout, g);
+        g->timeoutEvent = allocate_and_add_timer(sClient->base, g->timeout * 1000, handle_get_timeout, (void *)(uint32_t)getId);
         if (g->timeoutEvent == NULL) {
             AFLOG_ERR("handle_get_response_timer::");
             rStatus = AF_ATTR_STATUS_NO_SPACE;
@@ -828,6 +908,7 @@ int af_attr_get (uint32_t attributeId, af_attr_get_response_callback_t cb, void 
         goto error;
     }
 
+    /* we don't need a timeout for this because we use an IPC request */
     g = op_pool_alloc();
     if (g == NULL) {
         AFLOG_ERR("af_attr_get_alloc::can't allocate get context");

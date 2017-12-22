@@ -26,16 +26,17 @@ static int sDoDaemon = 0;
 static char *sSetString = NULL;
 
 
-static int on_owner_set(uint32_t attributeId, uint8_t *value, int length, void *context)
+static void on_owner_set(uint32_t attributeId, uint16_t setId, uint8_t *value, int length, void *context)
 {
+    int status = AF_ATTR_STATUS_OK;
     printf("attribute set: attributeId=%d value=\"%s\"\n", attributeId, (char *)value);
     if (strcmp((char *)value, "reject") == 0) {
-        return AF_ATTR_STATUS_SET_REJECT_BUSY;
+        status = AF_ATTR_STATUS_SET_REJECT_BUSY;
     }
     if (strcmp((char *)value, "quit") == 0) {
         event_base_loopbreak(sEventBase);
     }
-    return AF_ATTR_STATUS_OK;
+    af_attr_send_set_response(status, setId);
 }
 
 static void on_get_request(uint32_t attributeId, uint16_t getId, void *context)

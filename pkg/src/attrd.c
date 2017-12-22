@@ -506,7 +506,7 @@ static void handle_set_request(trans_context_t *t, attrd_client_t *c)
                              t->attrValue->attrId, a->name, sAttrClientNames[a->ownerId], hexBuf);
             }
             /* create a set context */
-            op_context_t *s = op_pool_alloc();
+            op_context_t *s = op_alloc_with_timeout(sEventBase, SET_TIMEOUT * 1000, handle_set_timeout);
 
             if (s != NULL) {
 
@@ -514,36 +514,24 @@ static void handle_set_request(trans_context_t *t, attrd_client_t *c)
                 s->u.ss.clientOpId = t->opId;
                 s->u.ss.clientId = c->clientId;
                 s->attrId = a->id;
-                s->timeout = SET_TIMEOUT;
 
-                /* set a timeout event to clean up the context */
-                s->timeoutEvent = allocate_and_add_timer(sEventBase, s->timeout * 1000, handle_set_timeout, (void *)(uint32_t)s->opId);
-                if (s->timeoutEvent != NULL) {
+                /* add the attribute value to the set context */
+                s->u.ss.attrValue = t->attrValue;
+                attr_value_inc_ref_count(t->attrValue);
 
-                    /* add the attribute value to the set context */
-                    s->u.ss.attrValue = t->attrValue;
-                    attr_value_inc_ref_count(t->attrValue);
+                /* add to the outstanding set list */
+                s->next = sOutstandingSets;
+                sOutstandingSets = s;
 
-                    /* add to the outstanding set list */
-                    s->next = sOutstandingSets;
-                    sOutstandingSets = s;
+                AFLOG_DEBUG3("handle_set_request_send:attrId=%u,getId=%d,timeout=%d", s->attrId, s->opId, s->timeout);
 
-                    AFLOG_DEBUG3("handle_set_request_send:attrId=%u,getId=%d,timeout=%d", s->attrId, s->opId, s->timeout);
+                /* notify the owner that its attribute has changed */
+                notify_owner_of_attribute(s->opId, s->u.ss.attrValue, a->owner);
 
-                    /* notify the owner that its attribute has changed */
-                    notify_owner_of_attribute(s->opId, s->u.ss.attrValue, a->owner);
+                /* send nothing now; waiting for owner to provide status */
+                trans_cleanup(t);
 
-                    /* send nothing now; waiting for owner to provide status */
-                    trans_cleanup(t);
-                    return;
-                } else {
-                    AFLOG_ERR("handle_set_request_timer::can't allocate timer");
-
-                    /* free up allocated set context */
-                    op_pool_free(s);
-                    status = AF_ATTR_STATUS_UNSPECIFIED;
-                }
-
+                return;
             } else {
                 /* no op contexts available */
                 AFLOG_ERR("handle_set_request_alloc::");
@@ -856,7 +844,7 @@ static void handle_get_request(uint8_t *rxBuf, int rxBufSize, int pos, attrd_cli
     }
 
     /* create a get context */
-    g = op_pool_alloc();
+    g = op_alloc_with_timeout(sEventBase, attr->getTimeout * 1000, handle_get_timeout);
     if (g == NULL) {
         /* no get contexts available */
         AFLOG_ERR("handle_get_request_alloc::");
@@ -869,15 +857,6 @@ static void handle_get_request(uint8_t *rxBuf, int rxBufSize, int pos, attrd_cli
     g->u.sg.clientOpId = getId;
     g->u.sg.clientId = AF_IPC_GET_CLIENT_ID(seqNum);
     g->attrId = attrId;
-    g->timeout = attr->getTimeout;
-
-    /* set a timeout event to clean up the context */
-    g->timeoutEvent = allocate_and_add_timer(sEventBase, g->timeout * 1000, handle_get_timeout, (void *)(uint32_t)g->opId);
-    if (g->timeoutEvent == NULL) {
-        AFLOG_ERR("on_attr_get_response_timer::");
-        status = AF_ATTR_STATUS_UNSPECIFIED;
-        goto error;
-    }
 
     /* add to the outstanding get list */
     g->next = sOutstandingGets;

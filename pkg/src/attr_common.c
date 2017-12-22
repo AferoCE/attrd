@@ -753,6 +753,32 @@ struct event *allocate_and_add_timer(struct event_base *b, int timeoutMs, event_
     return e;
 }
 
+op_context_t *op_alloc_with_timeout(struct event_base *b, uint16_t timeoutSec, event_callback_t cb)
+{
+    op_context_t *o = NULL;
+
+    /* check parameters */
+    if (b == NULL || cb == NULL) {
+        AFLOG_ERR("op_alloc_with_timer_param:b_NULL=%d,cb_NULL=%d", b == NULL, cb == NULL);
+        return NULL;
+    }
+
+    /* allocate the op */
+    o = op_pool_alloc();
+    if (o == NULL) {
+        AFLOG_ERR("op_alloc_with_timer_alloc");
+        return NULL;
+    }
+
+    /* allocate the timer */
+    o->timeout = timeoutSec;
+    o->timeoutEvent = allocate_and_add_timer(b, timeoutSec * 1000, cb, (void *)(uint32_t)o->opId);
+    if (o->timeoutEvent == NULL) {
+        op_pool_free(o);
+        o = NULL;
+    }
+    return o;
+}
 
 /***************************************************************************************************************
  * Code to store and retrieve attributes in Little Endian

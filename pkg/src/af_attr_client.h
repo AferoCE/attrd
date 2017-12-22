@@ -51,10 +51,9 @@ typedef void (*af_attr_notify_callback_t) (uint32_t attributeId, uint8_t *value,
   af_attr_set_request_callback
 
   Informs the client that another client has attempted to set an attribute that it owns.
-  Returns the status of the set. For example, the set could fail because the client is
-  busy modifying the same attribute.
+  The callback can immediately call af_attr_send_set_response or call it later.
 */
-typedef int (*af_attr_set_request_callback_t) (uint32_t attributeId, uint8_t *value, int length, void *context);
+typedef void (*af_attr_set_request_callback_t) (uint32_t attributeId, uint16_t setId, uint8_t *value, int length, void *context);
 
 /*
   af_attr_get_request_callback
@@ -121,6 +120,14 @@ typedef void (*af_attr_set_response_callback_t)(int status, uint32_t attributeId
  * attribute flags, the change is propagated to the interested listeners too.
  */
 int af_attr_set (uint32_t attributeId, uint8_t *value, int length, af_attr_set_response_callback_t setCB, void *setContext);
+
+/* af_attr_send_set_response
+ *
+ * Sends a response to a set request received with the ownerSetCb.
+ * This function sends the status of the set to the attribute daemon, who forwards
+ * it to the requesting client.
+ */
+int af_attr_send_set_response (int status, uint16_t setId);
 
 /* af_attr_get
  *
