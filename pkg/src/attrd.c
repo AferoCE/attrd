@@ -69,6 +69,22 @@ char sAttrClientNames[][ATTR_OWNER_NAME_SIZE] = {
 };
 #undef _OWNERDEF
 
+/* EDGE ATTRIBUTES: */
+/* edge attribues: range 1-1023 */
+#define _MCU_ATTRDEF(attr_id_num,_attr_id_name,_attr_type,_attr_get_timeout,_attr_owner,_attr_flags) \
+    { \
+      .id = attr_id_num, \
+      .ownerId = AF_ATTR_OWNER_##_attr_owner, \
+      .flags = _attr_flags, \
+      .getTimeout = _attr_get_timeout, \
+      .name = #_attr_owner "_" #_attr_id_name "_" \
+    }
+
+attr_t edgeAttrs[EDGE_ATTR_END+1] = { [0 ... EDGE_ATTR_END] =
+    _MCU_ATTRDEF(0,  EDGE_ATTR, 0, EDGE_ATTR_GETTIMEOUT, HUBBY, (AF_ATTR_FLAG_WRITABLE | AF_ATTR_FLAG_NOTIFY))
+};
+
+#undef _MCU_ATTRDEF
 
 
 static struct event_base *sEventBase = NULL;
@@ -114,6 +130,13 @@ static void notify_register_owner(attrd_client_t *client, char *name)
         return;
     }
 
+    // edge attributes
+    if (owner == AF_ATTR_OWNER_HUBBY) {
+        for (i = EDGE_ATTR_START; i <= EDGE_ATTR_END; i++) {
+            edgeAttrs[i].owner = client;
+        }
+    }
+
     for (i = 0; i < NUM_ATTR; i++) {
         if (sAttr[i].ownerId == owner) {
             sAttr[i].owner = client;
@@ -134,12 +157,12 @@ static void notify_register_client_with_ranges(attrd_client_t *client, af_attr_r
     }
 
     int i;
+    int j;
+    int k;
     for (i = 0; i < NUM_ATTR; i++) {
-        int j;
         uint32_t attrId = sAttr[i].id;
         for (j = 0; j < numRanges; j++) {
             if (attrId >= ranges[j].first && attrId <= ranges[j].last) {
-                int k;
                 /* do not allow owner to register for its own notifications */
                 if (sAttr[i].owner != client) {
                     for (k = 0; k < MAX_NOTIFY_CLIENTS; k++) {
@@ -158,6 +181,33 @@ static void notify_register_client_with_ranges(attrd_client_t *client, af_attr_r
             }
         }
     }
+
+    //edge attributes
+    for (j = 0; j < numRanges; j++) {
+        if ((ranges[j].first >= EDGE_ATTR_START) && (ranges[j].last <= EDGE_ATTR_END)) {
+            AFLOG_ERR("notify_register_client_with_ranges:range[%d].first=%d, last=%d", j, ranges[j].first, ranges[j].last);
+
+            i = ranges[j].first;
+            if (edgeAttrs[i].owner != client)  {
+                for (i=ranges[j].first; i<= ranges[j].last; i++) {
+                    for (k = 0; k < MAX_NOTIFY_CLIENTS; k++) {
+                        if (edgeAttrs[i].notify[k] == NULL) {
+                            edgeAttrs[i].notify[k] = client;
+                            break;
+                        }
+                    }
+                    if (k >= MAX_NOTIFY_CLIENTS) {
+                        AFLOG_ERR("notify_register_client_table_full:attrId=%d,k=%d", i, k);
+                    }
+                } // for i
+            }
+            else {
+                AFLOG_WARNING("owner_self_notify:owner=%s,attrId=%d:owner registration for notification on its own attribute ignored",
+                               sAttrClientNames[client->ownerId], i);
+            }
+        }
+    }
+
 }
 
 /* This function is called when a client closes. It clears the owner of any attributes
@@ -183,6 +233,19 @@ static void notify_unregister_client(attrd_client_t *client)
             }
         }
     }
+
+    // edge attributes
+    for (i = EDGE_ATTR_START; i <= EDGE_ATTR_END; i++) {
+        if (client->ownerId == AF_ATTR_OWNER_HUBBY) {
+            edgeAttrs[i].owner = NULL;
+        }
+
+        for (int j = 0; j < MAX_NOTIFY_CLIENTS; j++) {
+            if (edgeAttrs[i].notify[j] == client) {
+                edgeAttrs[i].notify[j] = NULL;
+            }
+        }
+    }
 }
 
 /* This function returns a pointer to the attribute struct that matches the specified
@@ -191,10 +254,14 @@ static void notify_unregister_client(attrd_client_t *client)
  */
 static attr_t *notify_find_attribute_with_id(uint32_t attrId)
 {
-    int i;
-    for (i = 0; i < NUM_ATTR; i++) {
-        if (sAttr[i].id == attrId) {
-            return &sAttr[i];
+    if ((attrId >= EDGE_ATTR_START) && (attrId <= EDGE_ATTR_END)) {
+        return &edgeAttrs[attrId];
+    }
+    else {
+        for (int i = 0; i < NUM_ATTR; i++) {
+            if (sAttr[i].id == attrId) {
+                return &sAttr[i];
+            }
         }
     }
     return NULL;
@@ -1203,6 +1270,15 @@ int main(int argc, char *argv[])
         goto exit;
     }
     opPoolStarted = 1;
+
+    /* edge attr db - set the id */
+    for (int i=EDGE_ATTR_START; i<=EDGE_ATTR_END; i++) {
+        char buf[10];
+        edgeAttrs[i].id = i;
+        sprintf(buf, "%d", i);
+        strcat(edgeAttrs[i].name, buf);
+        memset(edgeAttrs[i].notify, 0, sizeof(edgeAttrs[i].notify));
+    }
 
     /* clear out notify clients */
     int i;

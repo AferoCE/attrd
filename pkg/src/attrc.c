@@ -496,21 +496,43 @@ convert_input_value(arg_type_t type, const char * val, int *lengthP)
 
 static int parse_attribute_id(const char *arg)
 {
+	int i, attr;
+
     if (is_digits(arg)) {
-        int i, attr = atoi(arg);
+        attr = atoi(arg);
+        if ((attr >= EDGE_ATTR_START) && (attr <= EDGE_ATTR_END)) {
+            return attr;
+        }
+
         for (i = 0; i < sizeof(sAttrs) / sizeof(sAttrs[0]); i++) {
             if (attr == sAttrs[i].id) {
                 return attr;
             }
         }
     } else {
-        int i;
+        // handle the edge attributes (MCU attributes) first
+        int len = strlen(arg);
+        if (!strncmp(arg, EDGE_ATTR_OWNER_NAME_PREFIX, EDGE_ATTR_OWNER_NAME_PREFIX_LEN)) {
+            if (len > EDGE_ATTR_OWNER_NAME_PREFIX_LEN) {
+                sscanf(&arg[EDGE_ATTR_OWNER_NAME_PREFIX_LEN], "%d", &attr);
+                if ((attr >= EDGE_ATTR_START) && (attr <= EDGE_ATTR_END)) {
+                    return attr;
+                }
+		    }
+
+            // if it gets here, then an error has occurred
+            goto err_exit;
+        }
+
+        // check for the other attributes
         for (i = 0; i < sizeof(sAttrs) / sizeof(sAttrs[0]); i++) {
             if (!strcmp(sAttrs[i].name, arg)) {
                 return sAttrs[i].id;
             }
         }
     }
+
+err_exit:
     fprintf(stderr, "Attribute %s not found\n", arg);
     return -1;
 }

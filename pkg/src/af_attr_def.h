@@ -30,6 +30,20 @@
 #define AF_ATTR_FLAG_WRITABLE (1<<0)
 #define AF_ATTR_FLAG_NOTIFY   (1<<1)
 
+
+/*
+ * The attributes from 1 to 1023 are referred to as MCU Application Specific
+ * attributes.  In attrd implementation, these attributes are owned by hubby.
+ */
+#define EDGE_ATTR_START   1
+#define EDGE_ATTR_END     1023
+
+#define EDGE_ATTR_GETTIMEOUT  5
+
+#define EDGE_ATTR_OWNER_NAME_PREFIX     "HUBBY_EDGE_ATTR_"
+#define EDGE_ATTR_OWNER_NAME_PREFIX_LEN  strlen(EDGE_ATTR_OWNER_NAME_PREFIX)
+
+
 /*
  * The attribute ID in the enum will have AF_ATTR_ and the owner prepended.
  * For example the Wi-Fi secret attribute ID will be AF_ATTR_WIFISTA_SECRET

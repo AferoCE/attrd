@@ -56,6 +56,11 @@ static op_context_t *sSetsToSend = NULL;        /* sets this client owns but has
 static uint16_t get_timeout_for_attribute_id(uint32_t attrId)
 {
     int i;
+
+    if ((attrId >= EDGE_ATTR_START) && (attrId <= EDGE_ATTR_END)) {
+        return EDGE_ATTR_GETTIMEOUT;
+    }
+
     for (i = 0; i < ARRAY_SIZE(sAttrTimeouts); i++) {
         if (attrId == sAttrTimeouts[i].attrId) {
             return sAttrTimeouts[i].getTimeout;
