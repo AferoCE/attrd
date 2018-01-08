@@ -1,7 +1,7 @@
 /*
- * file attr_prv.h -- definitions common between attribute API and attribute daemon
+ * attr_prv.h -- definitions common between attribute API and attribute daemon
  *
- * Copyright (c) 2016-2017 Afero, Inc. All rights reserved.
+ * Copyright (c) 2016-2018 Afero, Inc. All rights reserved.
  *
  */
 #ifndef __AF_ATTR_PRV_H__
@@ -241,9 +241,6 @@ op_context_t *op_alloc_with_timeout(struct event_base *b, uint16_t timeoutSec, e
 
 /* max blob size */
 #define MAX_SEND_BLOB_SIZE (3968)
-
-/* timeout for attribute set */
-#define SET_TIMEOUT (5)
 
 #endif // __AF_ATTR_PRV_H__
 

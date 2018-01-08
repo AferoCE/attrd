@@ -1,7 +1,7 @@
 /*
  * attrd.c -- attribute daemon
  *
- * Copyright (c) 2016-2017 Afero, Inc. All rights reserved.
+ * Copyright (c) 2016-2018 Afero, Inc. All rights reserved.
  *
  * Clif Liu
  */
@@ -44,10 +44,10 @@ typedef struct attr_struct {
     uint16_t pad;
     attrd_client_t *owner;
     attrd_client_t *notify[MAX_NOTIFY_CLIENTS];
-    char name[ATTR_NAME_SIZE];
+    char name[AF_ATTR_NAME_SIZE];
 } attr_t;
 
-#define _ATTRDEF(_attr_id_num,_attr_id_name,_attr_type,_attr_get_timeout,_attr_owner,_attr_flags) \
+#define _AF_ATTR_ATTRDEF(_attr_id_num,_attr_id_name,_attr_type,_attr_get_timeout,_attr_owner,_attr_flags) \
     { \
       .id = AF_ATTR_##_attr_owner##_##_attr_id_name, \
       .ownerId = AF_ATTR_OWNER_##_attr_owner, \
@@ -56,18 +56,18 @@ typedef struct attr_struct {
       .name = #_attr_owner "_" #_attr_id_name \
     }
 attr_t sAttr[] = {
-    _ATTRIBUTES
+    _AF_ATTR_ATTRIBUTES
 };
-#undef _ATTRDEF
+#undef _AF_ATTR_ATTRDEF
 
 #define ARRAY_SIZE(_a) (sizeof(_a)/sizeof(_a[0]))
 #define NUM_ATTR ARRAY_SIZE(sAttr)
 
-#define _OWNERDEF(_owner) "IPC." #_owner
-char sAttrClientNames[][ATTR_OWNER_NAME_SIZE] = {
-    _OWNERS
+#define _AF_ATTR_OWNERDEF(_owner) "IPC." #_owner
+char sAttrClientNames[][AF_ATTR_OWNER_NAME_SIZE] = {
+    _AF_ATTR_OWNERS
 };
-#undef _OWNERDEF
+#undef _AF_ATTR_OWNERDEF
 
 /* EDGE ATTRIBUTES: */
 /* edge attribues: range 1-1023 */
@@ -77,11 +77,11 @@ char sAttrClientNames[][ATTR_OWNER_NAME_SIZE] = {
       .ownerId = AF_ATTR_OWNER_##_attr_owner, \
       .flags = _attr_flags, \
       .getTimeout = _attr_get_timeout, \
-      .name = #_attr_owner "_" #_attr_id_name "_" \
+      .name = #_attr_id_name "_" \
     }
 
-attr_t edgeAttrs[EDGE_ATTR_END+1] = { [0 ... EDGE_ATTR_END] =
-    _MCU_ATTRDEF(0,  EDGE_ATTR, 0, EDGE_ATTR_GETTIMEOUT, HUBBY, (AF_ATTR_FLAG_WRITABLE | AF_ATTR_FLAG_NOTIFY))
+attr_t sEdgeAttrs[AF_ATTR_EDGE_END+1] = { [0 ... AF_ATTR_EDGE_END] =
+    _MCU_ATTRDEF(0,  EDGE_ATTR, 0, AF_ATTR_EDGE_GET_TIMEOUT, HUBBY, (AF_ATTR_FLAG_WRITABLE | AF_ATTR_FLAG_NOTIFY))
 };
 
 #undef _MCU_ATTRDEF
@@ -132,8 +132,8 @@ static void notify_register_owner(attrd_client_t *client, char *name)
 
     // edge attributes
     if (owner == AF_ATTR_OWNER_HUBBY) {
-        for (i = EDGE_ATTR_START; i <= EDGE_ATTR_END; i++) {
-            edgeAttrs[i].owner = client;
+        for (i = AF_ATTR_EDGE_START; i <= AF_ATTR_EDGE_END; i++) {
+            sEdgeAttrs[i].owner = client;
         }
     }
 
@@ -184,15 +184,15 @@ static void notify_register_client_with_ranges(attrd_client_t *client, af_attr_r
 
     //edge attributes
     for (j = 0; j < numRanges; j++) {
-        if ((ranges[j].first >= EDGE_ATTR_START) && (ranges[j].last <= EDGE_ATTR_END)) {
+        if ((ranges[j].first >= AF_ATTR_EDGE_START) && (ranges[j].last <= AF_ATTR_EDGE_END)) {
             AFLOG_ERR("notify_register_client_with_ranges:range[%d].first=%d, last=%d", j, ranges[j].first, ranges[j].last);
 
             i = ranges[j].first;
-            if (edgeAttrs[i].owner != client)  {
+            if (sEdgeAttrs[i].owner != client)  {
                 for (i=ranges[j].first; i<= ranges[j].last; i++) {
                     for (k = 0; k < MAX_NOTIFY_CLIENTS; k++) {
-                        if (edgeAttrs[i].notify[k] == NULL) {
-                            edgeAttrs[i].notify[k] = client;
+                        if (sEdgeAttrs[i].notify[k] == NULL) {
+                            sEdgeAttrs[i].notify[k] = client;
                             break;
                         }
                     }
@@ -235,14 +235,14 @@ static void notify_unregister_client(attrd_client_t *client)
     }
 
     // edge attributes
-    for (i = EDGE_ATTR_START; i <= EDGE_ATTR_END; i++) {
+    for (i = AF_ATTR_EDGE_START; i <= AF_ATTR_EDGE_END; i++) {
         if (client->ownerId == AF_ATTR_OWNER_HUBBY) {
-            edgeAttrs[i].owner = NULL;
+            sEdgeAttrs[i].owner = NULL;
         }
 
         for (int j = 0; j < MAX_NOTIFY_CLIENTS; j++) {
-            if (edgeAttrs[i].notify[j] == client) {
-                edgeAttrs[i].notify[j] = NULL;
+            if (sEdgeAttrs[i].notify[j] == client) {
+                sEdgeAttrs[i].notify[j] = NULL;
             }
         }
     }
@@ -254,8 +254,8 @@ static void notify_unregister_client(attrd_client_t *client)
  */
 static attr_t *notify_find_attribute_with_id(uint32_t attrId)
 {
-    if ((attrId >= EDGE_ATTR_START) && (attrId <= EDGE_ATTR_END)) {
-        return &edgeAttrs[attrId];
+    if ((attrId >= AF_ATTR_EDGE_START) && (attrId <= AF_ATTR_EDGE_END)) {
+        return &sEdgeAttrs[attrId];
     }
     else {
         for (int i = 0; i < NUM_ATTR; i++) {
@@ -478,7 +478,7 @@ static void notify_owner_of_attribute(uint16_t opId, attr_value_t *aValue, attrd
 
 /* This function is called in the following case: a client has set the value of an
  * attribute that it doesn't own. The attribute daemon has notified the owner of the new
- * value of the attribute, but the owner has not replied after SET_TIMEOUT seconds.
+ * value of the attribute, but the owner has not replied after AF_ATTR_SET_TIMEOUT seconds.
  */
 static void handle_set_timeout(evutil_socket_t fd, short what, void *context)
 {
@@ -573,7 +573,7 @@ static void handle_set_request(trans_context_t *t, attrd_client_t *c)
                              t->attrValue->attrId, a->name, sAttrClientNames[a->ownerId], hexBuf);
             }
             /* create a set context */
-            op_context_t *s = op_alloc_with_timeout(sEventBase, SET_TIMEOUT * 1000, handle_set_timeout);
+            op_context_t *s = op_alloc_with_timeout(sEventBase, AF_ATTR_SET_TIMEOUT * 1000, handle_set_timeout);
 
             if (s != NULL) {
 
@@ -1065,7 +1065,7 @@ static void handle_open_request(uint8_t *rxBuf, int rxBufSize, int pos, attrd_cl
     int status = AF_ATTR_STATUS_UNSPECIFIED;
 
     /* get the name */
-    char name[ATTR_OWNER_NAME_SIZE];
+    char name[AF_ATTR_OWNER_NAME_SIZE];
     int nameSize = sizeof(name) - 1;
 
     pos = af_rpc_get_blob_with_length_from_buffer_at_pos(name, &nameSize, rxBuf, rxBufSize, pos);
@@ -1272,12 +1272,12 @@ int main(int argc, char *argv[])
     opPoolStarted = 1;
 
     /* edge attr db - set the id */
-    for (int i=EDGE_ATTR_START; i<=EDGE_ATTR_END; i++) {
+    for (int i=AF_ATTR_EDGE_START; i<=AF_ATTR_EDGE_END; i++) {
         char buf[10];
-        edgeAttrs[i].id = i;
+        sEdgeAttrs[i].id = i;
         sprintf(buf, "%d", i);
-        strcat(edgeAttrs[i].name, buf);
-        memset(edgeAttrs[i].notify, 0, sizeof(edgeAttrs[i].notify));
+        strcat(sEdgeAttrs[i].name, buf);
+        memset(sEdgeAttrs[i].notify, 0, sizeof(sEdgeAttrs[i].notify));
     }
 
     /* clear out notify clients */

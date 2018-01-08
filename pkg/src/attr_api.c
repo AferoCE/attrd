@@ -1,7 +1,7 @@
 /*
  * attr_api.c -- attribute daemon client library
  *
- * Copyright (c) 2016-2017 Afero, Inc. All rights reserved.
+ * Copyright (c) 2016-2018 Afero, Inc. All rights reserved.
  *
  */
 
@@ -35,14 +35,14 @@ typedef struct attr_timeout_struct {
     uint16_t pad;
 } attr_timeout_t;
 
-#define _ATTRDEF(_attr_id_num,_attr_id_name,_attr_type,_attr_get_timeout,_attr_owner,_attr_flags) \
+#define _AF_ATTR_ATTRDEF(_attr_id_num,_attr_id_name,_attr_type,_attr_get_timeout,_attr_owner,_attr_flags) \
  { .attrId = _attr_id_num, .getTimeout = _attr_get_timeout }
 
 static attr_timeout_t sAttrTimeouts[] = {
-    _ATTRIBUTES
+    _AF_ATTR_ATTRIBUTES
 };
 
-#undef _ATTRDEF
+#undef _AF_ATTR_ATTRDEF
 
 static client_t *sClient = NULL;
 static trans_context_t *sReadTrans = NULL;
@@ -57,8 +57,8 @@ static uint16_t get_timeout_for_attribute_id(uint32_t attrId)
 {
     int i;
 
-    if ((attrId >= EDGE_ATTR_START) && (attrId <= EDGE_ATTR_END)) {
-        return EDGE_ATTR_GETTIMEOUT;
+    if ((attrId >= AF_ATTR_EDGE_START) && (attrId <= AF_ATTR_EDGE_END)) {
+        return AF_ATTR_EDGE_GET_TIMEOUT;
     }
 
     for (i = 0; i < ARRAY_SIZE(sAttrTimeouts); i++) {
@@ -190,7 +190,7 @@ static void inform_set_owner(trans_context_t *t)
     }
 
     /* allocate a set request */
-    op_context_t *s = op_alloc_with_timeout(sClient->base, SET_TIMEOUT, handle_set_owner_timeout);
+    op_context_t *s = op_alloc_with_timeout(sClient->base, AF_ATTR_SET_TIMEOUT, handle_set_owner_timeout);
     if (s == NULL) {
         AFLOG_ERR("dispatch_set_request_to_client::can't allocate set context");
 
@@ -638,7 +638,7 @@ static int send_request(uint16_t clientId, uint8_t *buf, int bufSize, af_ipc_rec
 }
 
 /* This function is called when an attribute set request initiated using the af_attr_set
- * call fails to complete within SET_TIMEOUT seconds. It calls the set callback associated
+ * call fails to complete within AF_ATTR_SET_TIMEOUT seconds. It calls the set callback associated
  * with the set request and cleans up the outstanding set context.
  */
 static void handle_set_daemon_timeout(evutil_socket_t fd, short what, void *context)
@@ -669,7 +669,7 @@ int af_attr_set (uint32_t attributeId, uint8_t *value, int length, af_attr_set_r
         return AF_ATTR_STATUS_BAD_PARAM;
     }
 
-    s = op_alloc_with_timeout(sClient->base, SET_TIMEOUT * 1000, handle_set_daemon_timeout);
+    s = op_alloc_with_timeout(sClient->base, AF_ATTR_SET_TIMEOUT * 1000, handle_set_daemon_timeout);
     if (s == NULL) {
         AFLOG_ERR("af_attr_set_alloc::can't allocate set context");
         status = AF_ATTR_STATUS_NO_SPACE;
@@ -975,8 +975,8 @@ int af_attr_send_get_response (int status, uint16_t getId, uint8_t *value, int l
     }
 
     /* check parameters */
-    if (getId == 0 || (status == AF_ATTR_STATUS_OK && value == NULL) ||
-        length <= 0 || length >= UINT16_MAX || status < 0 || status >= AF_ATTR_STATUS_MAX) {
+    if (getId == 0 || status < 0 || status >= AF_ATTR_STATUS_MAX ||
+        (status == AF_ATTR_STATUS_OK && (value == NULL || length <= 0 || length >= UINT16_MAX))) {
         AFLOG_ERR("af_attr_send_get_resp_param:status=%d,getId=%d,value_null=%d,length=%d",
                   status, getId, value == NULL, length);
         return AF_ATTR_STATUS_BAD_PARAM;

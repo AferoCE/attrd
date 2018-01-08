@@ -1,7 +1,7 @@
 /*
- * file attr_common.c -- implementation of client/server common code
+ * attr_common.c -- implementation of client/server common code
  *
- * Copyright (c) 2016-2017 Afero, Inc. All rights reserved.
+ * Copyright (c) 2016-2018 Afero, Inc. All rights reserved.
  *
  */
 #include <stdint.h>

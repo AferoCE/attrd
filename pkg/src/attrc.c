@@ -1,5 +1,7 @@
 /*
- * Copyright (c) 2016 Afero, Inc. All rights reserved.
+ * attrc.c -- attribute client
+ *
+ * Copyright (c) 2016-2018 Afero, Inc. All rights reserved.
  */
 
 #include <stdint.h>
@@ -14,7 +16,10 @@
 #include "af_attr_client.h"
 #include "af_log.h"
 
-#define _ATTRDEF(_attr_id_num,_attr_id_name,_attr_type,_attr_get_timeout,_attr_owner,_attr_flags) { #_attr_owner "_" #_attr_id_name , _attr_id_num }
+#define EDGE_ATTR_OWNER_NAME_PREFIX     "EDGE_ATTR_"
+#define EDGE_ATTR_OWNER_NAME_PREFIX_LEN (sizeof(EDGE_ATTR_OWNER_NAME_PREFIX)-1)
+
+#define _AF_ATTR_ATTRDEF(_attr_id_num,_attr_id_name,_attr_type,_attr_get_timeout,_attr_owner,_attr_flags) { #_attr_owner "_" #_attr_id_name , _attr_id_num }
 
 typedef struct {
     char *name;
@@ -22,14 +27,16 @@ typedef struct {
 } attrc_t;
 
 static attrc_t sAttrs[] = {
-    _ATTRIBUTES
+    _AF_ATTR_ATTRIBUTES
 };
 
-#define _ATTR_STATUS_DEF(_x) #_x
+#define _AF_ATTR_STATUS_DEF(_x) #_x
 
 static char *sAttrStatus[] = {
-    _ATTR_STATUS_LIST
+    _AF_ATTR_STATUS_LIST
 };
+
+#undef _AF_ATTR_STATUS_DEF
 
 #define ATTRC_ERR (-1)
 #define ATTRC_OK  (0)
@@ -500,7 +507,7 @@ static int parse_attribute_id(const char *arg)
 
     if (is_digits(arg)) {
         attr = atoi(arg);
-        if ((attr >= EDGE_ATTR_START) && (attr <= EDGE_ATTR_END)) {
+        if ((attr >= AF_ATTR_EDGE_START) && (attr <= AF_ATTR_EDGE_END)) {
             return attr;
         }
 
@@ -515,7 +522,7 @@ static int parse_attribute_id(const char *arg)
         if (!strncmp(arg, EDGE_ATTR_OWNER_NAME_PREFIX, EDGE_ATTR_OWNER_NAME_PREFIX_LEN)) {
             if (len > EDGE_ATTR_OWNER_NAME_PREFIX_LEN) {
                 sscanf(&arg[EDGE_ATTR_OWNER_NAME_PREFIX_LEN], "%d", &attr);
-                if ((attr >= EDGE_ATTR_START) && (attr <= EDGE_ATTR_END)) {
+                if ((attr >= AF_ATTR_EDGE_START) && (attr <= AF_ATTR_EDGE_END)) {
                     return attr;
                 }
 		    }
