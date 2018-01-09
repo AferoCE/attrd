@@ -36,6 +36,7 @@ typedef struct attrd_client_struct {
 
 static attrd_client_t *sClients[AF_IPCS_MAX_CLIENTS];
 
+
 typedef struct attr_struct {
     uint32_t id;
     uint16_t ownerId;
@@ -104,23 +105,48 @@ static int client_find(attrd_client_t *client)
     return -1;
 }
 
+// return a index to the sClient array
+static int client_find_by_ownerId(uint8_t ownerId)
+{
+    int i;
+    for (i = 0; i < AF_IPCS_MAX_CLIENTS; i++) {
+        if ((sClients[i] != NULL) && (sClients[i])->ownerId == ownerId) {
+            return i;
+        }
+    }
+    return (-1);
+}
+
+// return the ownerId given the client name
+static uint8_t client_find_ownerId_by_name(char *name)
+{
+    int i, owner = AF_ATTR_OWNER_UNKNOWN;
+
+    if (name == NULL) {
+        AFLOG_ERR("client_find_owner_by_name: name = null");
+        return(AF_ATTR_OWNER_UNKNOWN);
+    }
+
+    for (i = 1; i < ARRAY_SIZE(sAttrClientNames); i++) {
+        if (strcmp(name, sAttrClientNames[i]) == 0) {
+            owner = i;
+        }
+    }
+    return (owner);
+}
+
 /* This function sets the pointer to the owner of each attribute owned by the client with
  * the specified name to the specified client struct. It also sets the ownerId in the
  * client struct to the ownerId that matches the name. It is called when the client
  * first opens a connection to the attribute daemon.
  */
-static void notify_register_owner(attrd_client_t *client, char *name)
+static void notify_register_owner(attrd_client_t *client, char *name, uint8_t owner)
 {
+    int i;
+
     if (client == NULL || name == NULL) {
         AFLOG_ERR("notify_register_owner_param:client_null=%d,name_null=%d:", client == NULL, name == NULL);
         return;
-    }
-
-    int i, owner = 0;
-    for (i = 1; i < ARRAY_SIZE(sAttrClientNames); i++) {
-        if (strcmp(name, sAttrClientNames[i]) == 0) {
-            owner = i;
-        }
     }
 
     client->ownerId = owner;
@@ -1063,6 +1089,7 @@ static void handle_open_request(uint8_t *rxBuf, int rxBufSize, int pos, attrd_cl
 
     uint8_t txBuf[32]; // buffer for the status response
     int status = AF_ATTR_STATUS_UNSPECIFIED;
+    uint8_t  ownerId = AF_ATTR_OWNER_UNKNOWN;
 
     /* get the name */
     char name[AF_ATTR_OWNER_NAME_SIZE];
@@ -1075,8 +1102,17 @@ static void handle_open_request(uint8_t *rxBuf, int rxBufSize, int pos, attrd_cl
     }
     name[nameSize] = '\0';
 
-    /* match the name to the owner ID and register it; also sets ownerId */
-    notify_register_owner(client, name);
+    ownerId = client_find_ownerId_by_name(name);
+    AFLOG_INFO("handle_open_request: ownerId=%d (%s)", ownerId, name);
+    if (ownerId != AF_ATTR_OWNER_UNKNOWN) {
+        int owner_cIdx = client_find_by_ownerId(ownerId);
+        if (owner_cIdx >= 0) {
+            AFLOG_ERR("handle_open_request:: an instance of: %s exists, reject it", name);
+            goto exit;
+        }
+        /* sets owner */
+        notify_register_owner(client, name, ownerId);
+    }
 
     uint16_t numRanges;
     pos = af_rpc_get_uint16_from_buffer_at_pos(&numRanges, rxBuf, rxBufSize, pos);
