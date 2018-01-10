@@ -599,7 +599,7 @@ static void handle_set_request(trans_context_t *t, attrd_client_t *c)
                              t->attrValue->attrId, a->name, sAttrClientNames[a->ownerId], hexBuf);
             }
             /* create a set context */
-            op_context_t *s = op_alloc_with_timeout(sEventBase, AF_ATTR_SET_TIMEOUT * 1000, handle_set_timeout);
+            op_context_t *s = op_alloc_with_timeout(sEventBase, AF_ATTR_SET_TIMEOUT, handle_set_timeout);
 
             if (s != NULL) {
 
@@ -937,7 +937,7 @@ static void handle_get_request(uint8_t *rxBuf, int rxBufSize, int pos, attrd_cli
     }
 
     /* create a get context */
-    g = op_alloc_with_timeout(sEventBase, attr->getTimeout * 1000, handle_get_timeout);
+    g = op_alloc_with_timeout(sEventBase, attr->getTimeout, handle_get_timeout);
     if (g == NULL) {
         /* no get contexts available */
         AFLOG_ERR("handle_get_request_alloc::");

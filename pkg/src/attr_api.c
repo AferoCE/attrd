@@ -361,7 +361,7 @@ static void handle_get_request(uint8_t *rxBuf, int rxSize, int pos, uint32_t seq
     }
 
     /* allocate a get request */
-    op_context_t *g = op_alloc_with_timeout(sClient->base, timeout * 1000, handle_client_get_send_timeout);
+    op_context_t *g = op_alloc_with_timeout(sClient->base, timeout, handle_client_get_send_timeout);
     if (g == NULL) {
         AFLOG_ERR("handle_get_req_get_alloc::can't allocate get context");
         status = AF_ATTR_STATUS_NO_SPACE;
@@ -669,7 +669,7 @@ int af_attr_set (uint32_t attributeId, uint8_t *value, int length, af_attr_set_r
         return AF_ATTR_STATUS_BAD_PARAM;
     }
 
-    s = op_alloc_with_timeout(sClient->base, AF_ATTR_SET_TIMEOUT * 1000, handle_set_daemon_timeout);
+    s = op_alloc_with_timeout(sClient->base, AF_ATTR_SET_TIMEOUT, handle_set_daemon_timeout);
     if (s == NULL) {
         AFLOG_ERR("af_attr_set_alloc::can't allocate set context");
         status = AF_ATTR_STATUS_NO_SPACE;
@@ -913,7 +913,7 @@ int af_attr_get (uint32_t attributeId, af_attr_get_response_callback_t cb, void 
         goto error;
     }
 
-    /* we don't need a timeout for this because we use an IPC request */
+    /* we will add the timeout when we get back the initial response from attrd */
     g = op_pool_alloc();
     if (g == NULL) {
         AFLOG_ERR("af_attr_get_alloc::can't allocate get context");
