@@ -15,6 +15,7 @@
 
 #include "af_attr_client.h"
 #include "af_log.h"
+#include "value_formats.h"
 
 #define EDGE_ATTR_OWNER_NAME_PREFIX     "EDGE_ATTR_"
 #define EDGE_ATTR_OWNER_NAME_PREFIX_LEN (sizeof(EDGE_ATTR_OWNER_NAME_PREFIX)-1)
@@ -42,18 +43,6 @@ static char *sAttrStatus[] = {
 #define ATTRC_OK  (0)
 
 typedef enum {
-    ARG_TYPE_INVALID = 0,
-    ARG_TYPE_UINT8,
-    ARG_TYPE_UINT16,
-    ARG_TYPE_UINT32,
-    ARG_TYPE_INT8,
-    ARG_TYPE_INT16,
-    ARG_TYPE_INT32,
-    ARG_TYPE_HEX,
-    ARG_TYPE_STRING
-} arg_type_t;
-
-typedef enum {
     OP_INVALID = 0,
     OP_SET,
     OP_GET,
@@ -63,7 +52,7 @@ typedef enum {
 uint32_t g_debugLevel = 2;
 static op_type_t sOp = OP_INVALID;
 
-static arg_type_t sArgType;
+static value_format_t sArgType;
 static uint32_t sAttrId;
 
 static uint8_t *sSetValue = NULL;
@@ -84,47 +73,12 @@ static void on_set_finished(int status, uint32_t attributeId, void *context)
     event_base_loopbreak(sEventBase);
 }
 
-
-static void print_value(uint8_t *value, int length, arg_type_t argType)
-{
-    switch (argType) {
-        case ARG_TYPE_STRING:
-            printf ("\"%s\"", (char *)value);
-            break;
-        case ARG_TYPE_UINT8:
-            printf ("%u", *(uint8_t *)value);
-            break;
-        case ARG_TYPE_UINT16:
-            printf ("%d", af_attr_get_uint16(value));
-            break;
-        case ARG_TYPE_UINT32:
-            printf ("%u", af_attr_get_uint32(value));
-            break;
-        case ARG_TYPE_INT8:
-            printf ("%d", *(int8_t *)value);
-            break;
-        case ARG_TYPE_INT16:
-            printf ("%d", af_attr_get_int16(value));
-            break;
-        case ARG_TYPE_INT32:
-            printf ("%d", af_attr_get_int32(value));
-            break;
-        case ARG_TYPE_HEX:
-            for (int i = 0; i<length; i++) {
-                printf ("%02x", *((uint8_t *)value+i));
-            }
-            break;
-        default:
-            fprintf (stderr, "No type");
-            break;
-    }
-}
-
 static void on_notify(uint32_t attributeId, uint8_t *value, int length, void *context)
 {
     printf ("%u ", attributeId);
-    print_value(value, length, sArgType);
-    printf ("\n");
+    char *output = vf_alloc_and_convert_output_value(sArgType, value, length);
+    printf ("%s\n", output);
+    free(output);
     event_base_loopbreak(sEventBase);
 }
 
@@ -135,8 +89,9 @@ static void on_get_response(uint8_t status, uint32_t attributeId, uint8_t *value
         fprintf (stderr,"get failed: %s\n", sAttrStatus[status]);
         sStatus = status;
     } else {
-        print_value(value, length, sArgType);
-        printf("\n");
+        char *output = vf_alloc_and_convert_output_value(sArgType, value, length);
+        printf("%s\n", output);
+        free(output);
     }
     event_base_loopbreak(sEventBase);
 }
@@ -221,85 +176,25 @@ is_xdigits(const char *s)
     return 0;
 }
 
-static arg_type_t
-param_type(const char *s)
-{
-    int size = 0;
-    int retVal = ARG_TYPE_INVALID;
-    if (strlen(s) >= 1) {
-        switch (s[0]) {
-            case 'u':
-                size = atoi(&s[1]);
-                switch (size) {
-                    case 8:
-                        retVal = ARG_TYPE_UINT8;
-                        break;
-                    case 16:
-                        retVal = ARG_TYPE_UINT16;
-                        break;
-                    case 32:
-                        retVal = ARG_TYPE_UINT32;
-                        break;
-                }
-                break;
-
-            case 'i':
-                size = atoi(&s[1]);
-                switch (size) {
-                    case 8:
-                        retVal = ARG_TYPE_INT8;
-                        break;
-                    case 16:
-                        retVal = ARG_TYPE_INT16;
-                        break;
-                    case 32:
-                        retVal = ARG_TYPE_INT32;
-                        break;
-                }
-                break;
-
-            case 's':
-                retVal = ARG_TYPE_STRING;
-                break;
-
-            case 'h':
-                retVal = ARG_TYPE_HEX;
-                break;
-
-            default:
-                break;
-        }
-    }
-    if (retVal == ARG_TYPE_INVALID) {
-        fprintf(stderr, "invalid argument type %s\n", s);
-    }
-    return retVal;
-}
-
 static int
-param_type_value_match(arg_type_t type, const char *t)
+param_type_value_match(value_format_t type, const char *t)
 {
     switch (type) {
-        case ARG_TYPE_INT8:
-        case ARG_TYPE_INT16:
-        case ARG_TYPE_INT32:
+        case VALUE_FORMAT_INT8:
+        case VALUE_FORMAT_INT16:
+        case VALUE_FORMAT_INT32:
+        case VALUE_FORMAT_UINT8:
+        case VALUE_FORMAT_UINT16:
+        case VALUE_FORMAT_UINT32:
             if (is_digits(t) == 1) {
                return 1;
             }
             break;
 
-        case ARG_TYPE_UINT8:
-        case ARG_TYPE_UINT16:
-        case ARG_TYPE_UINT32:
-            if (is_digits(t) == 1) {
-               return 1;
-            }
-            break;
-
-        case ARG_TYPE_STRING:
+        case VALUE_FORMAT_STRING:
             return 1;
 
-        case ARG_TYPE_HEX:
+        case VALUE_FORMAT_HEX:
             if (is_xdigits(t) == 1) {
                return 1;
             }
@@ -309,196 +204,6 @@ param_type_value_match(arg_type_t type, const char *t)
             return 1;
     }
     return 0;
-}
-
-static uint8_t
-hexnybble(char c)
-{
-    if (c >= '0' && c <= '9') {
-        c = c - '0';
-    } else if (c >= 'a' && c <= 'f') {
-        c = c - 'a' + 10;
-    } else if (c >= 'A' && c <= 'F') {
-        c = c - 'A' + 10;
-    } else {
-        c = 0;
-    }
-    return (uint8_t)c;
-}
-
-static uint8_t *
-convert_input_value(arg_type_t type, const char * val, int *lengthP)
-{
-    uint8_t *setValue = NULL;
-
-    if (lengthP == NULL) {
-        return NULL;
-    }
-
-    switch (type) {
-
-        case ARG_TYPE_UINT8:
-        {
-            int32_t long_val = strtoul(val, NULL, 10);
-            if ((long_val > UINT8_MAX) || (long_val < 0)) {
-                fprintf(stderr, "value outside of uint8_t range\n");
-                return NULL;
-            }
-            uint8_t value = (uint8_t) long_val;
-            setValue = malloc(sizeof(value));
-            if (setValue == NULL)
-            {
-                fprintf(stderr, "Memory allocation error\n");
-                return NULL;
-            }
-            memcpy(setValue, &value, (sizeof(value)));
-            *lengthP = sizeof(uint8_t);
-            break;
-        }
-
-        case ARG_TYPE_UINT16:
-        {
-            int32_t long_val = strtol(val, NULL, 10);
-            if ((long_val > UINT16_MAX) || (long_val < 0)) {
-                fprintf(stderr, "value outside of uint16_t range\n");
-                return NULL;
-            }
-            setValue = malloc(sizeof(uint16_t));
-            if (setValue == NULL)
-            {
-                fprintf(stderr, "Memory allocation error\n");
-                return NULL;
-            }
-            af_attr_store_uint16(setValue, (uint16_t)long_val);
-            *lengthP = sizeof(uint16_t);
-            break;
-        }
-
-        case ARG_TYPE_UINT32:
-        {
-            errno = 0;
-            uint32_t long_val = strtoul(val, NULL, 10);
-            if (val[0] == '-' || (long_val == UINT32_MAX && errno == ERANGE)) {
-                fprintf(stderr, "value outside of uint32_t range\n");
-                return NULL;
-            }
-            setValue = malloc(sizeof(uint32_t));
-            if (setValue == NULL) {
-                fprintf(stderr, "Memory allocation error\n");
-                return NULL;
-            }
-            af_attr_store_uint32(setValue, long_val);
-            *lengthP = sizeof(uint32_t);
-            break;
-        }
-
-        case ARG_TYPE_INT8:
-        {
-            int32_t long_val = strtol(val, NULL, 10);
-            if ((long_val > INT8_MAX) || (long_val < INT8_MIN)) {
-                fprintf(stderr, "value outside of int8_t range\n");
-                return NULL;
-            }
-            setValue = malloc(sizeof(int8_t));
-            if (setValue == NULL)
-            {
-               fprintf(stderr, "Memory allocation error\n");
-               return NULL;
-            }
-            int8_t value = (int8_t)long_val;
-            memcpy(setValue, &value, sizeof(value));
-            *lengthP = sizeof(int8_t);
-            break;
-        }
-
-        case ARG_TYPE_INT16:
-        {
-            int32_t long_val = strtol(val, NULL, 10);
-            if ((long_val > INT16_MAX) || (long_val < INT16_MIN)) {
-                fprintf(stderr, "value outside of int16_t range\n");
-                return NULL;
-            }
-            setValue = malloc(sizeof(int16_t));
-            if (setValue == NULL)
-            {
-                fprintf(stderr, "Memory allocation error\n");
-                return NULL;
-            }
-            af_attr_store_int16(setValue, (int16_t)long_val);
-            *lengthP = sizeof(int16_t);
-            break;
-        }
-
-        case ARG_TYPE_INT32:
-        {
-            int32_t long_val = strtol(val, NULL, 10);
-            if ((long_val == INT32_MIN || long_val == INT32_MAX) && errno == ERANGE) {
-                fprintf(stderr, "value outside of int32_t range\n");
-                return NULL;
-            }
-            setValue = malloc(sizeof(int32_t));
-            if (setValue == NULL)
-            {
-                fprintf(stderr, "Memory allocation error\n");
-                return NULL;
-            }
-            af_attr_store_int32(setValue, long_val);
-            *lengthP = sizeof(int32_t);
-            break;
-        }
-
-        case ARG_TYPE_STRING:
-        {
-            int size = strlen(val) + 1;
-            setValue = malloc(size);
-            if (setValue == NULL)
-            {
-                fprintf(stderr, "Memory allocation error\n");
-                return NULL;
-            }
-            memcpy(setValue, val, size);
-            *lengthP = size;
-            break;
-        }
-
-        case ARG_TYPE_HEX:
-        {
-            const char *tmp = val;
-            int l = strlen(tmp);
-            if (l == 0 || (l % 2) != 0)
-            {
-                fprintf(stderr, "hex values must have an even number of digits in param\n");
-                return NULL;
-            }
-
-            if (is_xdigits(tmp) == 0)
-            {
-                fprintf(stderr, "illegal hex digit in param\n");
-                return NULL;
-            }
-
-            int len = l/2;
-            setValue = malloc(len);
-            if (setValue == NULL)
-            {
-                fprintf(stderr, "Memory allocation error\n");
-                return NULL;
-            }
-
-            for (l = 0; l < len; l++) {
-                setValue[l] = hexnybble(tmp[l*2]) * 16 + hexnybble(tmp[l*2+1]);
-            }
-            *lengthP = len;
-            break;
-        }
-
-        default:
-            fprintf(stderr, "Illegal type");
-            return NULL;
-            break;
-    }
-
-    return setValue;
 }
 
 static int parse_attribute_id(const char *arg)
@@ -554,12 +259,12 @@ static int parse_params(int argc, char * argv[])
             }
             sAttrId = id;
             if (argc > 3) {
-                sArgType = param_type(argv[3]);
-                if (sArgType == ARG_TYPE_INVALID) {
+                sArgType = vf_get_format_for_name(argv[3]);
+                if (sArgType == VALUE_FORMAT_UNKNOWN) {
                     return ATTRC_ERR;
                 }
             } else {
-                sArgType = ARG_TYPE_HEX;
+                sArgType = VALUE_FORMAT_HEX;
             }
             sOp = OP_WAIT;
             return ATTRC_OK;
@@ -571,12 +276,12 @@ static int parse_params(int argc, char * argv[])
             }
             sAttrId = id;
             if (argc > 3) {
-                sArgType = param_type(argv[3]);
-                if (sArgType == ARG_TYPE_INVALID) {
+                sArgType = vf_get_format_for_name(argv[3]);
+                if (sArgType == VALUE_FORMAT_UNKNOWN) {
                     return ATTRC_ERR;
                 }
             } else {
-                sArgType = ARG_TYPE_HEX;
+                sArgType = VALUE_FORMAT_HEX;
             }
             sOp = OP_GET;
             return ATTRC_OK;
@@ -588,10 +293,10 @@ static int parse_params(int argc, char * argv[])
             }
             sAttrId = id;
             if (argc > 3) {
-                int argType = ARG_TYPE_HEX;
+                int argType = VALUE_FORMAT_HEX;
                 if (argc > 4) {
-                    argType = param_type(argv[4]);
-                    if (argType == ARG_TYPE_INVALID) {
+                    argType = vf_get_format_for_name(argv[4]);
+                    if (argType == VALUE_FORMAT_UNKNOWN) {
                         return ATTRC_ERR;
                     }
                 }
@@ -600,7 +305,7 @@ static int parse_params(int argc, char * argv[])
                     return ATTRC_ERR;
                 }
 
-                sSetValue = convert_input_value(argType, argv[3], &sSetValueLength);
+                sSetValue = vf_alloc_and_convert_input_value(argType, argv[3], &sSetValueLength);
                 if (sSetValue == NULL) {
                     return ATTRC_ERR;
                 }

@@ -3,7 +3,7 @@ bin_PROGRAMS = attrd attr_test attrc
 lib_LIBRARIES = libaf_attr.a
 include_HEADERS = af_attr_def.h af_attr_client.h
 
-attrd_SOURCES = attrd.c attrd_attr.c attr_common.c
+attrd_SOURCES = attrd.c attrd_attr.c attr_common.c value_formats.c attr_script.c
 attrd_LDADD = -L. -levent_pthreads -lpthread -levent -laf_ipc -laf_util
 attrd_CFLAGS = -Wall -std=gnu99 -ggdb3
 
@@ -11,7 +11,7 @@ attr_test_SOURCES = attr_test.c
 attr_test_LDADD = -L. -laf_attr -levent_pthreads -lpthread -levent -laf_ipc -laf_util
 attr_test_CFLAGS = -Wall -std=gnu99 -ggdb3
 
-attrc_SOURCES = attrc.c
+attrc_SOURCES = attrc.c value_formats.c
 attrc_LDADD = -L. -laf_attr -levent_pthreads -lpthread -levent -laf_ipc -laf_util
 attrc_CFLAGS = -Wall -std=gnu99 -ggdb3
 

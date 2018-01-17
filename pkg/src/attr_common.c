@@ -12,6 +12,7 @@
 #include "af_attr_client.h"
 #include "af_rpc.h"
 #include "af_log.h"
+#include "af_mempool.h"
 
 /* attribute value API */
 attr_value_t *attr_value_create(uint32_t attributeId, uint16_t size)
@@ -65,24 +66,16 @@ static uint16_t trans_new_id(void)
     return retVal;
 }
 
-static trans_context_t *sTransPool = NULL;
-static trans_context_t *sTransFree = NULL;
+static af_mempool_t *sTransPool = NULL;
 
 /* allocate a pool of transactions */
 int trans_pool_init(uint16_t maxTransactions)
 {
-    sTransPool = (trans_context_t *)calloc(maxTransactions, sizeof(trans_context_t));
+    sTransPool = af_mempool_create(maxTransactions, sizeof(trans_context_t), AF_MEMPOOL_FLAG_EXPAND);
     if (sTransPool == NULL) {
         errno = ENOMEM;
         return -1;
     }
-
-    int i;
-    for (i = 0; i < maxTransactions - 1; i++) {
-        sTransPool[i].next = &sTransPool[i+1];
-    }
-    sTransPool[maxTransactions - 1].next = NULL;
-    sTransFree = &sTransPool[0];
     return 0;
 }
 
@@ -90,8 +83,7 @@ int trans_pool_init(uint16_t maxTransactions)
 void trans_pool_deinit(void)
 {
     if (sTransPool) {
-        sTransFree = NULL;
-        free(sTransPool);
+        af_mempool_destroy(sTransPool);
         sTransPool = NULL;
     }
 }
@@ -99,9 +91,8 @@ void trans_pool_deinit(void)
 /* get a transaction from the pool */
 trans_context_t *trans_pool_alloc(void)
 {
-    trans_context_t *retVal = sTransFree;
-    if (sTransFree) {
-        sTransFree = sTransFree->next;
+    trans_context_t *retVal = af_mempool_alloc(sTransPool);
+    if (retVal) {
         memset (retVal, 0, sizeof(trans_context_t));
     }
     return retVal;
@@ -111,8 +102,7 @@ trans_context_t *trans_pool_alloc(void)
 void trans_pool_free(trans_context_t *trans)
 {
     if (trans != NULL) {
-        trans->next = sTransFree;
-        sTransFree = trans;
+        af_mempool_free(trans);
     }
 }
 
@@ -592,43 +582,31 @@ static uint16_t op_new_id(void)
     return retVal;
 }
 
-static op_context_t *sOpPool = NULL;
-static op_context_t *sOpFree = NULL;
+static af_mempool_t *sOpPool = NULL;
 
 /* allocate a pool of transactions */
 int op_pool_init(uint16_t maxOps)
 {
-    sOpPool = (op_context_t *)calloc(maxOps, sizeof(op_context_t));
+    sOpPool = af_mempool_create(maxOps, sizeof(op_context_t), AF_MEMPOOL_FLAG_EXPAND);
     if (sOpPool == NULL) {
         errno = ENOMEM;
         return -1;
     }
-
-    int i;
-    for (i = 0; i < maxOps - 1; i++) {
-        sOpPool[i].next = &sOpPool[i+1];
-    }
-    sOpPool[maxOps - 1].next = NULL;
-    sOpFree = &sOpPool[0];
     return 0;
 }
 
 /* assumes no one is using any transactions */
 void op_pool_deinit(void)
 {
-    if (sOpPool) {
-        sOpFree = NULL;
-        free(sOpPool);
-        sOpPool = NULL;
-    }
+    af_mempool_destroy(sOpPool);
+    sOpPool = NULL;
 }
 
 /* get a clean op context from the pool */
 op_context_t *op_pool_alloc(void)
 {
-    op_context_t *retVal = sOpFree;
-    if (sOpFree) {
-        sOpFree = sOpFree->next;
+    op_context_t *retVal = af_mempool_alloc(sOpPool);
+    if (retVal) {
         memset (retVal, 0, sizeof(op_context_t));
         retVal->opId = op_new_id();
         AFLOG_DEBUG2("allocated op:opId=%d", retVal->opId);
@@ -641,8 +619,7 @@ void op_pool_free(op_context_t *o)
 {
     if (o != NULL) {
         AFLOG_DEBUG2("freeing op:opId=%d", o->opId);
-        o->next = sOpFree;
-        sOpFree = o;
+        af_mempool_free(o);
     }
 }
 
