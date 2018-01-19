@@ -1011,7 +1011,7 @@ static void handle_get_request(uint8_t *rxBuf, int rxBufSize, int pos, attrd_cli
     /* initialize the get context */
     g->u.sg.clientSeqNum = seqNum;
     g->u.sg.clientOpId = getId;
-    g->u.sg.clientId = AF_IPC_GET_CLIENT_ID(seqNum);
+    g->u.sg.clientId = af_ipc_get_client_id_from_seq_num(seqNum);
     g->attrId = attrId;
 
     /* add to the outstanding get list */
@@ -1204,7 +1204,7 @@ static void handle_open_request(uint8_t *rxBuf, int rxBufSize, int pos, attrd_cl
     }
 
     client->opened = 1;
-    client->clientId = AF_IPC_GET_CLIENT_ID(seqNum);
+    client->clientId = af_ipc_get_client_id_from_seq_num(seqNum);
 
     status = AF_ATTR_STATUS_OK;
 
@@ -1259,17 +1259,7 @@ static void receive_callback(int status, uint32_t seqNum, uint8_t *rxBuffer, int
             return;
         }
 
-        if (AF_IPC_GET_SEQ_ID(seqNum) == 0) {
-            /* this is unsolicited */
-            switch(opcode) {
-                case AF_ATTR_OP_SET_REPLY :
-                    handle_set_reply(rxBuffer, rxBufferSize, pos);
-                    break;
-                default :
-                    AFLOG_ERR("attrd_receive_unsol:opcode=%d:unknown unsolicited opcode", opcode);
-                    break;
-            }
-        } else {
+        if (af_ipc_seq_num_is_request(seqNum)) {
             /* this is a request */
             switch(opcode) {
                 case AF_ATTR_OP_NOTIFY :
@@ -1289,6 +1279,16 @@ static void receive_callback(int status, uint32_t seqNum, uint8_t *rxBuffer, int
                     break;
                 default :
                     AFLOG_ERR("attrd_receive_request:opcode=%d:unknown request opcode", opcode);
+                    break;
+            }
+        } else {
+            /* this is unsolicited */
+            switch(opcode) {
+                case AF_ATTR_OP_SET_REPLY :
+                    handle_set_reply(rxBuffer, rxBufferSize, pos);
+                    break;
+                default :
+                    AFLOG_ERR("attrd_receive_unsol:opcode=%d:unknown unsolicited opcode", opcode);
                     break;
             }
         }

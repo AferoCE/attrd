@@ -469,17 +469,7 @@ static void unsol_callback (int status, uint32_t seqNum, uint8_t *rxBuf, int rxS
             return;
         }
 
-        if (AF_IPC_GET_SEQ_ID(seqNum) == 0) {
-            /* this is unsolicited */
-            switch(opcode) {
-                case AF_ATTR_OP_SET_REPLY :
-                    handle_set_reply(rxBuf, rxSize);
-                    break;
-                default :
-                    AFLOG_ERR("unsol_callback_unsol:opcode=%d:unknown unsolicited opcode", opcode);
-                    break;
-            }
-        } else {
+        if (af_ipc_seq_num_is_request(seqNum)) {
             /* this is a request */
             switch(opcode) {
                 case AF_ATTR_OP_NOTIFY :
@@ -492,6 +482,16 @@ static void unsol_callback (int status, uint32_t seqNum, uint8_t *rxBuf, int rxS
                     break;
                 default :
                     AFLOG_ERR("unsol_callback_opcode:opcode=%d:unhandled request", opcode);
+                    break;
+            }
+        } else {
+            /* this is unsolicited */
+            switch(opcode) {
+                case AF_ATTR_OP_SET_REPLY :
+                    handle_set_reply(rxBuf, rxSize);
+                    break;
+                default :
+                    AFLOG_ERR("unsol_callback_unsol:opcode=%d:unknown unsolicited opcode", opcode);
                     break;
             }
         }
