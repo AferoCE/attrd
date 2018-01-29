@@ -100,6 +100,28 @@ static trans_context_t *sReadTrans = NULL;
 static op_context_t *sOutstandingGets = NULL;
 static op_context_t *sOutstandingSets = NULL;
 
+#ifndef BUILD_TARGET_RELEASE
+static void dump_attrd_state(void)
+{
+    AFLOG_DEBUG3("dump_attrd_state:Attributes");
+    int i;
+    for (i = 0; i < NUM_ATTR; i++) {
+        AFLOG_DEBUG3("  attrId=%d owner=%s name=%s", sAttr[i].id, sAttrClientNames[sAttr[i].ownerId], sAttr[i].name);
+        if (sAttr[i].notify) {
+            notify_client_t *n;
+            for (n = sAttr[i].notify; n; n = n->next) {
+                AFLOG_DEBUG3("    notify=%s", sAttrClientNames[n->client->ownerId]);
+            }
+        }
+    }
+    AFLOG_DEBUG3("dump_attrd_state:Clients");
+    attrd_client_t *c;
+    for (c = sClients; c; c = c->next) {
+        AFLOG_DEBUG3("  name=%s", sAttrClientNames[c->ownerId]);
+    }
+}
+#endif
+
 static attrd_client_t *client_find_by_owner_id(uint16_t ownerId)
 {
     attrd_client_t *c;
@@ -1316,6 +1338,7 @@ static void close_callback(void *clientContext)
                 }
                 /* free memory associated with the client */
                 af_mempool_free(c);
+                break;
             }
             last = rc;
         }
