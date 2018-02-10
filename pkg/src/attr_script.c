@@ -47,6 +47,13 @@ static path_entry_t *s_paths = NULL;
 static af_mempool_t *s_scriptPool = NULL;
 static script_entry_t *s_scripts = NULL;
 
+static int s_scriptTimeoutsSec[] = {
+    20, /* init */
+    20, /* notify */
+    3,  /* set */
+    3   /* get */
+};
+
 typedef struct pid_entry_struct {
     struct pid_entry_struct *next;
     pid_t pid;
@@ -595,7 +602,7 @@ static void script_exec(pid_entry_t *p)
         }
         struct timeval tv;
         tv.tv_usec = 0;
-        tv.tv_sec = SCRIPT_TIMEOUT;
+        tv.tv_sec = s_scriptTimeoutsSec[p->script->type];
         evtimer_add(pe->event, &tv);
     }
 }
