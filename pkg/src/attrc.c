@@ -136,7 +136,8 @@ static void on_open(int status, void *context)
 static
 void usage()
 {
-    fprintf(stderr, "attrc [-s <name>] set | get | wait <arguments>\n");
+    fprintf(stderr, "attrc list | set | get | wait <arguments>\n");
+    fprintf(stderr, "   attrc list\n");
     fprintf(stderr, "   attrc set <attribute> <value> [<type>]\n");
     fprintf(stderr, "   attrc get <attribute> [<return_type>]\n");
     fprintf(stderr, "   attrc wait <attribute> [<return_type>]\n");
@@ -326,15 +327,12 @@ int main(int argc, char * argv[])
     strcpy(sAttrOwner, "IPC.ATTRC");
 
     if (argc > 1) {
-        if (!strcmp(argv[1], "-s")) {
-            if (argc > 2) {
-                strcpy(sAttrOwner, IPC_NAME_PREFIX);
-                strncat(sAttrOwner, argv[2], sizeof(sAttrOwner) - sizeof(IPC_NAME_PREFIX));
-                parse_ret = parse_params(argc - 2, &argv[2]);
-            } else {
-                usage();
-                return AF_ATTR_STATUS_BAD_PARAM;
+        if (!strcmp(argv[1], "list")) {
+            int i;
+            for (i = 0; i < sizeof(sAttrs)/sizeof(sAttrs[0]); i++) {
+                printf("%5d %s\n", sAttrs[i].id, sAttrs[i].name);
             }
+            exit(0);
         } else {
             parse_ret = parse_params(argc, argv);
         }
