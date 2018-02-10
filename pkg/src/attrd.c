@@ -1194,6 +1194,8 @@ static void handle_open_request(uint8_t *rxBuf, int rxBufSize, int pos, attrd_cl
             AFLOG_ERR("handle_open_request_dup_owner:name=%s:duplicate owner rejected", name);
             goto exit;
         }
+    }
+    if (ownerId != AF_ATTR_OWNER_UNKNOWN) {
         /* sets owner */
         notify_register_owner(client, name, ownerId);
     }
