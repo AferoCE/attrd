@@ -360,7 +360,7 @@ int main(int argc, char * argv[])
     }
 
     int err = af_attr_open(sEventBase, sAttrOwner,
-                           (sOp == OP_WAIT ? 1 : 0), &r,
+                           (sOp == OP_WAIT ? 10000 : 0), &r,
                            (sOp == OP_WAIT ? on_notify : NULL), // notify callback
                            NULL,                                // owner set callback
                            NULL,                                // owner get callback

@@ -13,6 +13,7 @@
 #include <event2/thread.h>
 #include <string.h>
 #include <errno.h>
+#include <signal.h>
 #include "af_attr_def.h"
 #include "af_attr_client.h" // AF_ATTR_MAX_LISTEN_RANGES
 #include "attr_prv.h"
@@ -99,6 +100,7 @@ static struct event_base *sEventBase = NULL;
 static trans_context_t *sReadTrans = NULL;
 static op_context_t *sOutstandingGets = NULL;
 static op_context_t *sOutstandingSets = NULL;
+static struct event *sPipeEvent = NULL;
 
 #ifndef BUILD_TARGET_RELEASE
 static void dump_attrd_state(void)
@@ -1340,11 +1342,12 @@ static void close_callback(void *clientContext)
                 }
                 /* free memory associated with the client */
                 af_mempool_free(c);
-                break;
+                AFLOG_DEBUG3("attrd_close_client_found:client=%p",c);
+                return;
             }
             last = rc;
         }
-
+        AFLOG_ERR("attrd_close_client_not_found:client=%p",c);
     } else {
         AFLOG_ERR("attrd_close_client_context::client context is NULL");
     }
@@ -1357,6 +1360,10 @@ static void close_callback(void *clientContext)
 
 extern const char REVISION[];
 extern const char BUILD_DATE[];
+
+void on_pipe(evutil_socket_t fd, short what, void *context)
+{
+}
 
 int main(int argc, char *argv[])
 {
@@ -1375,6 +1382,12 @@ int main(int argc, char *argv[])
     sEventBase = event_base_new();
     if (sEventBase == NULL) {
         AFLOG_ERR("main_event_base_new::can't allocate event base");
+        retVal = -1;
+        goto exit;
+    }
+
+    sPipeEvent = evsignal_new(sEventBase, SIGPIPE, on_pipe, NULL);
+    if (sPipeEvent == NULL) {
         retVal = -1;
         goto exit;
     }
@@ -1466,6 +1479,11 @@ exit:
     if (sServer != NULL) {
         af_ipcs_shutdown(sServer);
         sServer = NULL;
+    }
+
+    if (sPipeEvent != NULL) {
+        event_free(sPipeEvent);
+        sPipeEvent = NULL;
     }
 
     if (sEventBase != NULL) {
