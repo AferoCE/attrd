@@ -69,11 +69,13 @@ static uint16_t get_timeout_for_attribute_id(uint32_t attrId)
     return 0;
 }
 
-static void close_client (int status)
+static void close_client (int status, int closeIpc)
 {
     if (sClient != NULL) {
         if (sClient->serverStarted) {
-            af_ipcc_shutdown(sClient->server);
+            if (closeIpc) {
+                af_ipcc_shutdown(sClient->server);
+            }
             sClient->serverOpened = 0;
             sClient->serverStarted = 0;
         }
@@ -95,11 +97,15 @@ static void close_client (int status)
 
 static void open_response_callback(int status, uint32_t seqNum, uint8_t *rxBuf, int rxSize, void *context)
 {
+    int shutdownIpc = 0;
+
     if (status != 0) {
         AFLOG_ERR("open_response:status=%d:open failed", status);
         status = AF_ATTR_STATUS_UNSPECIFIED;
         goto exit;
     }
+
+    shutdownIpc = 1;
 
     if (rxBuf == NULL || rxSize <= 0) {
         AFLOG_ERR("open_response_param:rxBuf_null=%d,rxSize=%d:", rxBuf == NULL, rxSize);
@@ -131,8 +137,8 @@ exit:
         (sClient->openCallback) (status, sClient->context);
     }
     if (status) {
-        /* open did not complete properly; close */
-        close_client(status);
+        /* open did not complete properly; close without closing IPC */
+        close_client(status, shutdownIpc);
     }
 }
 
@@ -502,8 +508,8 @@ static void unsol_callback (int status, uint32_t seqNum, uint8_t *rxBuf, int rxS
 
 static void close_callback (void *context)
 {
-    AFLOG_ERR("close_callback");
-    close_client(AF_ATTR_STATUS_UNSPECIFIED);
+    AFLOG_ERR("attr_client_close_callback");
+    close_client(AF_ATTR_STATUS_UNSPECIFIED, 0); /* we don't need to shut down IPC in this case */
 }
 
 #define MAX_TRANSACTIONS (10)
@@ -599,7 +605,7 @@ int af_attr_open (struct event_base *base,
     return status;
 
 exit:
-    close_client(AF_ATTR_STATUS_OK);
+    close_client(AF_ATTR_STATUS_OK, 1); /* don't call callback but close IPC */
 
     if (transPoolStarted) {
         trans_pool_deinit();
@@ -1067,7 +1073,7 @@ error:
 
 void af_attr_close (void)
 {
-    close_client(AF_ATTR_STATUS_OK);
+    close_client(AF_ATTR_STATUS_OK, 1); /* don't notify callback but close IPC */
     trans_pool_deinit();
     op_pool_deinit();
 }
