@@ -1192,9 +1192,10 @@ static void handle_open_request(uint8_t *rxBuf, int rxBufSize, int pos, attrd_cl
     ownerId = client_find_ownerId_by_name(name);
     AFLOG_INFO("handle_open_request: ownerId=%d (%s)", ownerId, name);
     if (ownerId != AF_ATTR_OWNER_UNKNOWN && ownerId != AF_ATTR_OWNER_ATTRC) {
-        if (client_find_by_owner_id(ownerId)) {
-            AFLOG_ERR("handle_open_request_dup_owner:name=%s:duplicate owner rejected", name);
-            goto exit;
+        attrd_client_t *client = client_find_by_owner_id(ownerId);
+        if (client) {
+            AFLOG_WARNING("handle_open_request_dup_owner:name=%s:duplicate owner; dropping previous owner", name);
+            af_ipcs_disconnect_client(sServer, client);
         }
     }
     if (ownerId != AF_ATTR_OWNER_UNKNOWN) {
@@ -1363,6 +1364,7 @@ extern const char BUILD_DATE[];
 
 void on_pipe(evutil_socket_t fd, short what, void *context)
 {
+    AFLOG_NOTICE("SIGPIPE received");
 }
 
 int main(int argc, char *argv[])
