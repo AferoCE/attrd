@@ -1192,10 +1192,10 @@ static void handle_open_request(uint8_t *rxBuf, int rxBufSize, int pos, attrd_cl
     ownerId = client_find_ownerId_by_name(name);
     AFLOG_INFO("handle_open_request: ownerId=%d (%s)", ownerId, name);
     if (ownerId != AF_ATTR_OWNER_UNKNOWN && ownerId != AF_ATTR_OWNER_ATTRC) {
-        attrd_client_t *client = client_find_by_owner_id(ownerId);
-        if (client) {
+        attrd_client_t *oldClient = client_find_by_owner_id(ownerId);
+        if (oldClient) {
             AFLOG_WARNING("handle_open_request_dup_owner:name=%s:duplicate owner; dropping previous owner", name);
-            af_ipcs_disconnect_client(sServer, client);
+            af_ipcs_disconnect_client(sServer, oldClient->clientId);
         }
     }
     if (ownerId != AF_ATTR_OWNER_UNKNOWN) {
