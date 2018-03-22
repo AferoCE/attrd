@@ -25,8 +25,6 @@ typedef struct {
     af_attr_get_request_callback_t getReqCallback;
     af_attr_status_callback_t closeCallback;
     af_attr_status_callback_t openCallback;
-    uint8_t serverOpened;
-    uint8_t serverStarted;
 } client_t;
 
 typedef struct attr_timeout_struct {
@@ -69,17 +67,13 @@ static uint16_t get_timeout_for_attribute_id(uint32_t attrId)
     return 0;
 }
 
-static void close_client (int status, int closeIpc)
+/* does not call the callback if the status is AF_ATTR_STATUS_OK */
+static void cleanup_client(int status)
 {
-    if (sClient != NULL) {
-        if (sClient->serverStarted) {
-            if (closeIpc) {
-                af_ipcc_shutdown(sClient->server);
-            }
-            sClient->serverOpened = 0;
-            sClient->serverStarted = 0;
-        }
+    trans_pool_deinit();
+    op_pool_deinit();
 
+    if (sClient != NULL) {
         af_attr_status_callback_t cb = sClient->closeCallback;
         void *context = sClient->context;
 
@@ -92,20 +86,35 @@ static void close_client (int status, int closeIpc)
     }
 }
 
+static void close_client(int status)
+{
+    if (sClient != NULL) {
+        af_attr_status_callback_t cb = sClient->closeCallback;
+        void *context = sClient->context;
+
+        /* if IPC is open, close it; otherwise clean up everything else */
+        if (sClient->server != NULL) {
+            /* causes cleanup_client without callback */
+            af_ipcc_close(sClient->server);
+            if (cb != NULL) {
+                (cb)(status, context);
+            }
+        } else {
+            cleanup_client(status);
+        }
+    }
+}
+
 
 #define OPEN_TIMEOUT 1000
 
 static void open_response_callback(int status, uint32_t seqNum, uint8_t *rxBuf, int rxSize, void *context)
 {
-    int shutdownIpc = 0;
-
     if (status != 0) {
         AFLOG_ERR("open_response:status=%d:open failed", status);
         status = AF_ATTR_STATUS_UNSPECIFIED;
         goto exit;
     }
-
-    shutdownIpc = 1;
 
     if (rxBuf == NULL || rxSize <= 0) {
         AFLOG_ERR("open_response_param:rxBuf_null=%d,rxSize=%d:", rxBuf == NULL, rxSize);
@@ -130,15 +139,14 @@ static void open_response_callback(int status, uint32_t seqNum, uint8_t *rxBuf, 
         goto exit;
     }
 
-    sClient->serverOpened = 1;
-
 exit:
-    if (sClient->openCallback) {
-        (sClient->openCallback) (status, sClient->context);
-    }
-    if (status) {
-        /* open did not complete properly; close without closing IPC */
-        close_client(status, shutdownIpc);
+    if (status == AF_ATTR_STATUS_OK) {
+        if (sClient->openCallback) {
+            (sClient->openCallback) (status, sClient->context);
+        }
+    } else {
+        /* open response was bad; close IPC */
+        close_client(status);
     }
 }
 
@@ -506,10 +514,10 @@ static void unsol_callback (int status, uint32_t seqNum, uint8_t *rxBuf, int rxS
     }
 }
 
-static void close_callback (void *context)
+static void close_callback (int status, void *context)
 {
     AFLOG_ERR("attr_client_close_callback");
-    close_client(AF_ATTR_STATUS_UNSPECIFIED, 0); /* we don't need to shut down IPC in this case */
+    cleanup_client(status);
 }
 
 #define MAX_TRANSACTIONS (10)
@@ -526,8 +534,6 @@ int af_attr_open (struct event_base *base,
 				  void *context)
 {
     int status = AF_ATTR_STATUS_OK;
-    uint8_t transPoolStarted = 0;
-    uint8_t opPoolStarted = 0;
 
     if (base == NULL || clientName == NULL || numListenRanges > AF_ATTR_MAX_LISTEN_RANGES) {
         AFLOG_ERR("af_attr_open_param:base_null=%d,clientName_null=%d,numListenRanges=%d:",
@@ -538,22 +544,19 @@ int af_attr_open (struct event_base *base,
     if (trans_pool_init(MAX_TRANSACTIONS) < 0) {
         AFLOG_ERR("af_attr_open_trans_pool_init::");
         status = AF_ATTR_STATUS_NO_SPACE;
-        goto exit;
     }
-    transPoolStarted = 1;
 
     if (op_pool_init(MAX_OPS) < 0) {
         AFLOG_ERR("af_attr_open_op_pool_init::");
         status = AF_ATTR_STATUS_NO_SPACE;
-        goto exit;
+        goto error;
     }
-    opPoolStarted = 1;
 
     sClient = calloc(1, sizeof(client_t));
     if (sClient == NULL) {
         AFLOG_ERR("attr_api_open_alloc_client::client struct allocation failed");
         status = AF_ATTR_STATUS_NO_SPACE;
-        goto exit;
+        goto error;
     }
 
     sClient->notifyCallback = notifyCb;
@@ -564,16 +567,14 @@ int af_attr_open (struct event_base *base,
     sClient->context = context;
     sClient->base = base;
 
-    sClient->server = af_ipcc_get_server(base, "IPC.ATTRD",
-                                         unsol_callback, NULL,
-                                         close_callback);
+    sClient->server = af_ipcc_open_server(base, "IPC.ATTRD",
+                                          unsol_callback, NULL,
+                                          close_callback);
     if (sClient->server == NULL) {
-        AFLOG_ERR("attr_api_open:get_server:errno=%d:failed to get server", errno);
+        AFLOG_ERR("attr_api_open:open_server:errno=%d:failed to get server", errno);
         status = AF_ATTR_STATUS_NO_DAEMON;
-        goto exit;
+        goto error;
     }
-
-    sClient->serverStarted = 1;
 
     /* tell the server information about the client */
     uint8_t txBuffer[AF_IPC_MAX_MSGLEN];
@@ -591,29 +592,23 @@ int af_attr_open (struct event_base *base,
     int pos = af_rpc_create_buffer_with_params(txBuffer, sizeof(txBuffer), params, np);
     if (pos < 0) {
         AFLOG_ERR("attr_api_open:af_rpc_create_buffer:pos=%d:", pos);
+        af_ipcc_close(sClient->server);
         status = AF_ATTR_STATUS_BAD_DATA;
-        goto exit;
+        goto error;
     }
 
     /* send the message */
     if (af_ipcc_send_request(sClient->server, txBuffer, pos, open_response_callback, NULL, OPEN_TIMEOUT) < 0) {
         AFLOG_ERR("attr_api_open:af_ipc_send_message:errno=%d:can't send listen length", errno);
+        af_ipcc_close(sClient->server);
         status = AF_ATTR_STATUS_UNSPECIFIED;
-        goto exit;
+        goto error;
     }
 
     return status;
 
-exit:
-    close_client(AF_ATTR_STATUS_OK, 1); /* don't call callback but close IPC */
-
-    if (transPoolStarted) {
-        trans_pool_deinit();
-    }
-
-    if (opPoolStarted) {
-        op_pool_deinit();
-    }
+error:
+    close_client(AF_ATTR_STATUS_OK); /* don't call callback */
 
     return status;
 }
@@ -1073,7 +1068,7 @@ error:
 
 void af_attr_close (void)
 {
-    close_client(AF_ATTR_STATUS_OK, 1); /* don't notify callback but close IPC */
-    trans_pool_deinit();
-    op_pool_deinit();
+    if (sClient != NULL) {
+        af_ipcc_close(sClient->server);
+    }
 }

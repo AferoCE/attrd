@@ -1195,7 +1195,7 @@ static void handle_open_request(uint8_t *rxBuf, int rxBufSize, int pos, attrd_cl
         attrd_client_t *oldClient = client_find_by_owner_id(ownerId);
         if (oldClient) {
             AFLOG_WARNING("handle_open_request_dup_owner:name=%s:duplicate owner; dropping previous owner", name);
-            af_ipcs_disconnect_client(sServer, oldClient->clientId);
+            af_ipcs_close_client(sServer, oldClient->clientId);
         }
     }
     if (ownerId != AF_ATTR_OWNER_UNKNOWN) {
@@ -1324,7 +1324,7 @@ static void receive_callback(int status, uint32_t seqNum, uint8_t *rxBuffer, int
     }
 }
 
-static void close_callback(void *clientContext)
+static void client_close_callback(int status, uint16_t clientId, void *clientContext)
 {
     if (clientContext) {
         attrd_client_t *c = (attrd_client_t *)clientContext;
@@ -1401,7 +1401,6 @@ int main(int argc, char *argv[])
         retVal = -1;
         goto exit;
     }
-    transPoolStarted = 1;
 
     if (op_pool_init(MAX_OPS) < 0) {
         AFLOG_ERR("attrd_op_pool_init::");
@@ -1409,7 +1408,6 @@ int main(int argc, char *argv[])
         retVal = -1;
         goto exit;
     }
-    opPoolStarted = 1;
 
     sClientPool = af_mempool_create(MAX_CLIENTS, sizeof(attrd_client_t), AF_MEMPOOL_FLAG_EXPAND);
     if (sClientPool == NULL) {
@@ -1446,9 +1444,9 @@ int main(int argc, char *argv[])
 
     sClients = NULL;
 
-    sServer = af_ipcs_init(sEventBase, "IPC.ATTRD",
-                            accept_callback, NULL,
-                            receive_callback, close_callback);
+    sServer = af_ipcs_open(sEventBase, "IPC.ATTRD",
+                           accept_callback, NULL,
+                           receive_callback, client_close_callback);
     if (sServer == NULL) {
         AFLOG_ERR("main_server:errno=%d:", errno);
         retVal = -1;
@@ -1470,18 +1468,14 @@ int main(int argc, char *argv[])
 */
 
 exit:
-    if (transPoolStarted) {
-        trans_pool_deinit();
-    }
-
-    if (opPoolStarted) {
-        op_pool_deinit();
-    }
-
     if (sServer != NULL) {
-        af_ipcs_shutdown(sServer);
+        af_ipcs_close(sServer);
         sServer = NULL;
     }
+
+    /* these functions are idempotent */
+    trans_pool_deinit();
+    op_pool_deinit();
 
     if (sPipeEvent != NULL) {
         event_free(sPipeEvent);

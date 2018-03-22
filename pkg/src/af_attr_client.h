@@ -83,15 +83,18 @@ typedef struct {
  * number of ranges in listenRanges list.
  *
  * Five callbacks are specified:
- *   notifyCb -- an attribute the client is interested in has changed
- *   ownerSetCb -- another client has changed an attribute this client owns
- *   getReqCb -- another client has requested an attribute this client owns
- *   closeCb -- the attribute client library has closed unexpectedly
- *   openCb -- the attribute client library either opened successfully or failed to open
+ *   notifyCb   - an attribute the client is interested in has changed
+ *   ownerSetCb - another client has changed an attribute this client owns
+ *   getReqCb   - another client has requested an attribute this client owns
+ *   closeCb    - the attribute client library has closed unexpectedly
+ *   openCb     - the attribute client library opened successfully (the status
+ *                parameter for this callback is always AF_ATTR_STATUS_OK)
  *
  * The five callbacks use the same specified context.
  *
- * Returns AF_ATTR_STATUS_OK if the open succeeds or an error code on failure.
+ * Returns AF_ATTR_STATUS_OK if the client can connect to the attribute daemon or
+ * an error code otherwise. The attribute client is not fully open until the open
+ * callback is called.
  */
 int af_attr_open (struct event_base *base,
                   char *clientName,
