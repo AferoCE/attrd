@@ -682,6 +682,16 @@ int script_parse_config(struct event_base *base)
             }
             cp++;
         }
+
+        /* search for first non whitespace character */
+        cp = line;
+        while (isspace(*cp) && *cp != '\0') cp++;
+
+        /* if none or comment, skip line */
+        if (*cp == '\0' || *cp == '#') {
+            continue;
+        }
+
         char *tokens[4];
         int nt = tokenize(line, tokens, sizeof(tokens)/sizeof(tokens[0]));
         handle_line(lineno, tokens, nt);
