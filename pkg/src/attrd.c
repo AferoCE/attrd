@@ -24,7 +24,12 @@
 #include "af_mempool.h"
 #include "af_ipc_server.h"
 
+#ifdef BUILD_TARGET_DEBUG
 uint32_t g_debugLevel = 3;
+#else
+uint32_t g_debugLevel = 1;
+#endif
+
 static af_ipcs_server_t *sServer = NULL;
 
 typedef struct attrd_client_struct {

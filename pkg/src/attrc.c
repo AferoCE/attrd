@@ -49,7 +49,12 @@ typedef enum {
     OP_WAIT
 } op_type_t;
 
+#ifdef BUILD_TARGET_DEBUG
 uint32_t g_debugLevel = 2;
+#else
+uint32_t g_debugLevel = 1;
+#endif
+
 static op_type_t sOp = OP_INVALID;
 
 static value_format_t sArgType;
