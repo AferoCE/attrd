@@ -253,28 +253,13 @@ char *vf_alloc_and_convert_output_value(value_format_t argType, uint8_t *value, 
     char *output = NULL;
 
     switch (argType) {
-        case VALUE_FORMAT_STRING: {
-            int i, nb = 0;
-            for (i = 0; i < length; i++) {
-                if (value[i] == '\"' || value[i] == '\\') {
-                    nb++;
-                }
-            }
-            output = (char *)malloc(length + nb + 2 + 1); /* include quotes and null terminator */
+        case VALUE_FORMAT_STRING:
+            output = (char *)malloc(length + 1);
             if (output != NULL) {
-                char *c = output;
-                *c++ = '\"';
-                for (i = 0; i < length && value[i] != '\0'; i++) {
-                    if (value[i] == '\"' || value[i] == '\\') {
-                        *c++ = '\\';
-                    }
-                    *c++ = value[i];
-                }
-                *c++ = '\"';
-                *c = '\0';
+                memcpy(output, value, length);
+                output[length] = '\0';
             }
             break;
-        }
         case VALUE_FORMAT_UINT8:
             output = (char *)malloc(4); /* maximum size of decimal uint8 + null terminator */
             if (output != NULL) {
@@ -325,4 +310,40 @@ char *vf_alloc_and_convert_output_value(value_format_t argType, uint8_t *value, 
     }
 
     return output;
+}
+
+char *vf_alloc_and_convert_output_value_for_execv(value_format_t argType, uint8_t *value, int length)
+{
+    if (argType == VALUE_FORMAT_STRING) {
+        char *output = NULL;
+        int nb = 0;
+        char *c = value;
+        while (*c) {
+            if (*c == '\'') {
+                nb += 4;
+            } else {
+                nb++;
+            }
+            c++;
+        }
+        output = (char *)malloc(nb + 2 + 1); /* include space for escaped chars, quotes, term */
+        if (output != NULL) {
+            char *ci = value;
+            char *co = output;
+            *co++ = '\'';
+            while (*ci) {
+                if (*ci == '\'') {
+                    *co++ = '\'';
+                    *co++ = '\\';
+                    *co++ = '\'';
+                }
+                *co++ = *ci++;
+            }
+            *co++ = '\'';
+            *co = '\0';
+        }
+        return output;
+    } else {
+        return vf_alloc_and_convert_output_value(argType, value, length);
+    }
 }
