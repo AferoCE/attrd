@@ -510,7 +510,7 @@ static void script_exec(pid_entry_t *p)
                 vs = vf_alloc_and_convert_output_value_for_execv(p->script->format, p->u.n.v->value, p->u.n.v->size);
                 attr_value_dec_ref_count(p->u.n.v);
             } else {
-                vs = vf_alloc_and_convert_output_value(p->script->format, p->u.s.v->value, p->u.s.v->size);
+                vs = vf_alloc_and_convert_output_value_for_execv(p->script->format, p->u.s.v->value, p->u.s.v->size);
                 /* we do not decrement the ref count because we need it to notify listeners later */
             }
             if (vs == NULL) {
