@@ -20,14 +20,16 @@
 #define EDGE_ATTR_OWNER_NAME_PREFIX     "EDGE_ATTR_"
 #define EDGE_ATTR_OWNER_NAME_PREFIX_LEN (sizeof(EDGE_ATTR_OWNER_NAME_PREFIX)-1)
 
-#define _AF_ATTR_ATTRDEF(_attr_id_num,_attr_id_name,_attr_type,_attr_get_timeout,_attr_owner,_attr_flags) { #_attr_owner "_" #_attr_id_name , _attr_id_num }
+#define _AF_ATTR_ATTRDEF(_attr_id_num,_attr_id_name,_attr_type,_attr_get_timeout,_attr_owner,_attr_flags) \
+    { .name = #_attr_owner "_" #_attr_id_name , .id = _attr_id_num, .type = _attr_type }
 
 typedef struct {
     char *name;
     uint32_t id;
-} attrc_t;
+    af_attr_type_t type;
+} client_attr_t;
 
-static attrc_t sAttrs[] = {
+static client_attr_t sAttrs[] = {
     _AF_ATTR_ATTRIBUTES
 };
 
@@ -57,7 +59,7 @@ uint32_t g_debugLevel = 1;
 
 static op_type_t sOp = OP_INVALID;
 
-static value_format_t sArgType;
+static af_attr_type_t sArgType;
 static uint32_t sAttrId;
 
 static uint8_t *sSetValue = NULL;
@@ -142,12 +144,12 @@ static
 void usage()
 {
     fprintf(stderr, "attrc list | set | get | wait <arguments>\n");
-    fprintf(stderr, "   attrc list\n");
-    fprintf(stderr, "   attrc set <attribute> <value> [<type>]\n");
-    fprintf(stderr, "   attrc get <attribute> [<return_type>]\n");
-    fprintf(stderr, "   attrc wait <attribute> [<return_type>]\n");
-    fprintf(stderr, "   attribute can be specified by number, e.g., 51613 or by name, e.g., ATTRD_DEBUG_LEVEL\n");
-    fprintf(stderr, "   type can be one of i8, i16, i32, u8, u16, u32, h, or s. Type defaults to h\n");
+    fprintf(stderr, "   attrc list                    -- list attributes\n");
+    fprintf(stderr, "   attrc set <attribute> <value> -- set attribute value\n");
+    fprintf(stderr, "   attrc get <attribute>         -- get attribute value\n");
+    fprintf(stderr, "   attrc wait <attribute>        -- wait for notification\n");
+    fprintf(stderr, "   attribute can be specified by number, e.g., 51613\n");
+    fprintf(stderr, "   or by name, e.g., ATTRD_DEBUG_LEVEL\n");
 }
 
 static int
@@ -183,24 +185,21 @@ is_xdigits(const char *s)
 }
 
 static int
-param_type_value_match(value_format_t type, const char *t)
+param_type_value_match(af_attr_type_t type, const char *t)
 {
     switch (type) {
-        case VALUE_FORMAT_INT8:
-        case VALUE_FORMAT_INT16:
-        case VALUE_FORMAT_INT32:
-        case VALUE_FORMAT_UINT8:
-        case VALUE_FORMAT_UINT16:
-        case VALUE_FORMAT_UINT32:
+        case AF_ATTR_TYPE_SINT8:
+        case AF_ATTR_TYPE_SINT16:
+        case AF_ATTR_TYPE_SINT32:
             if (is_digits(t) == 1) {
                return 1;
             }
             break;
 
-        case VALUE_FORMAT_STRING:
+        case AF_ATTR_TYPE_UTF8S:
             return 1;
 
-        case VALUE_FORMAT_HEX:
+        case AF_ATTR_TYPE_BYTES:
             if (is_xdigits(t) == 1) {
                return 1;
             }
@@ -212,100 +211,61 @@ param_type_value_match(value_format_t type, const char *t)
     return 0;
 }
 
-static int parse_attribute_id(const char *arg)
+static client_attr_t *parse_attribute_id(const char *arg)
 {
-	int i, attr;
-
     if (is_digits(arg)) {
-        attr = atoi(arg);
-        if ((attr >= AF_ATTR_EDGE_START) && (attr <= AF_ATTR_EDGE_END)) {
-            return attr;
-        }
+        int attr = atoi(arg);
 
-        for (i = 0; i < sizeof(sAttrs) / sizeof(sAttrs[0]); i++) {
+        for (int i = 0; i < sizeof(sAttrs) / sizeof(sAttrs[0]); i++) {
             if (attr == sAttrs[i].id) {
-                return attr;
+                return &sAttrs[i];
             }
         }
     } else {
-        // handle the edge attributes (MCU attributes) first
-        int len = strlen(arg);
-        if (!strncmp(arg, EDGE_ATTR_OWNER_NAME_PREFIX, EDGE_ATTR_OWNER_NAME_PREFIX_LEN)) {
-            if (len > EDGE_ATTR_OWNER_NAME_PREFIX_LEN) {
-                sscanf(&arg[EDGE_ATTR_OWNER_NAME_PREFIX_LEN], "%d", &attr);
-                if ((attr >= AF_ATTR_EDGE_START) && (attr <= AF_ATTR_EDGE_END)) {
-                    return attr;
-                }
-		    }
-
-            // if it gets here, then an error has occurred
-            goto err_exit;
-        }
-
         // check for the other attributes
-        for (i = 0; i < sizeof(sAttrs) / sizeof(sAttrs[0]); i++) {
+        for (int i = 0; i < sizeof(sAttrs) / sizeof(sAttrs[0]); i++) {
             if (!strcmp(sAttrs[i].name, arg)) {
-                return sAttrs[i].id;
+                return &sAttrs[i];
             }
         }
     }
 
-err_exit:
     fprintf(stderr, "Attribute %s not found\n", arg);
-    return -1;
+    return NULL;
 }
 
 static int parse_params(int argc, char * argv[])
 {
     if (argc > 1) {
         if (!strncmp(argv[1], "wait", strlen(argv[1])) && argc > 2) {
-            int id = parse_attribute_id(argv[2]);
-            if (id < 0) {
+            client_attr_t *attr = parse_attribute_id(argv[2]);
+            if (!attr) {
                 return ATTRC_ERR;
             }
-            sAttrId = id;
-            if (argc > 3) {
-                sArgType = vf_get_format_for_name(argv[3]);
-                if (sArgType == VALUE_FORMAT_UNKNOWN) {
-                    return ATTRC_ERR;
-                }
-            } else {
-                sArgType = VALUE_FORMAT_HEX;
-            }
+            sAttrId = attr->id;
+            sArgType = attr->type;
             sOp = OP_WAIT;
             return ATTRC_OK;
 
         } else if (!strncmp(argv[1], "get", strlen(argv[1])) && argc > 2) {
-            int id = parse_attribute_id(argv[2]);
-            if (id < 0) {
+            client_attr_t *attr = parse_attribute_id(argv[2]);
+            if (!attr) {
                 return ATTRC_ERR;
             }
-            sAttrId = id;
-            if (argc > 3) {
-                sArgType = vf_get_format_for_name(argv[3]);
-                if (sArgType == VALUE_FORMAT_UNKNOWN) {
-                    return ATTRC_ERR;
-                }
-            } else {
-                sArgType = VALUE_FORMAT_HEX;
-            }
+            sAttrId = attr->id;
+            sArgType = attr->type;
             sOp = OP_GET;
             return ATTRC_OK;
 
         } else if (!strncmp(argv[1], "set", strlen(argv[1])) && argc > 2) {
-            int id = parse_attribute_id(argv[2]);
-            if (id < 0) {
+            client_attr_t *attr = parse_attribute_id(argv[2]);
+            if (!attr) {
                 return ATTRC_ERR;
             }
-            sAttrId = id;
+            sAttrId = attr->id;
+            af_attr_type_t argType = attr->type;
             if (argc > 3) {
-                int argType = VALUE_FORMAT_HEX;
-                if (argc > 4) {
-                    argType = vf_get_format_for_name(argv[4]);
-                    if (argType == VALUE_FORMAT_UNKNOWN) {
-                        return ATTRC_ERR;
-                    }
-                }
+
                 if (param_type_value_match(argType, argv[3]) == 0) {
                     fprintf(stderr, "value type does not match value argument: %s\n", argv[3]);
                     return ATTRC_ERR;
@@ -335,7 +295,7 @@ int main(int argc, char * argv[])
         if (!strcmp(argv[1], "list")) {
             int i;
             for (i = 0; i < sizeof(sAttrs)/sizeof(sAttrs[0]); i++) {
-                printf("%5d %s\n", sAttrs[i].id, sAttrs[i].name);
+                printf("%5d %s %s\n", sAttrs[i].id, sAttrs[i].name, vf_get_name_for_type(sAttrs[i].type));
             }
             exit(0);
         } else {

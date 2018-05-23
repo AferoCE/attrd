@@ -58,6 +58,7 @@ typedef struct attr_struct {
     uint16_t pad;
     attrd_client_t *owner;
     notify_client_t *notify;
+    af_attr_type_t type;
     char name[AF_ATTR_NAME_SIZE];
 } attr_t;
 
@@ -67,9 +68,10 @@ typedef struct attr_struct {
       .ownerId = AF_ATTR_OWNER_##_attr_owner, \
       .flags = _attr_flags, \
       .getTimeout = _attr_get_timeout, \
+      .type = _attr_type, \
       .name = #_attr_owner "_" #_attr_id_name \
     }
-attr_t sAttr[] = {
+static attr_t sAttr[] = {
     _AF_ATTR_ATTRIBUTES
 };
 #undef _AF_ATTR_ATTRDEF
@@ -78,7 +80,7 @@ attr_t sAttr[] = {
 #define NUM_ATTR ARRAY_SIZE(sAttr)
 
 #define _AF_ATTR_OWNERDEF(_owner) "IPC." #_owner
-char sAttrClientNames[][AF_ATTR_OWNER_NAME_SIZE] = {
+static char sAttrClientNames[][AF_ATTR_OWNER_NAME_SIZE] = {
     _AF_ATTR_OWNERS
 };
 #undef _AF_ATTR_OWNERDEF
@@ -94,7 +96,7 @@ char sAttrClientNames[][AF_ATTR_OWNER_NAME_SIZE] = {
       .name = #_attr_id_name "_" \
     }
 
-attr_t sEdgeAttrs[AF_ATTR_EDGE_END+1] = { [0 ... AF_ATTR_EDGE_END] =
+static attr_t sEdgeAttrs[AF_ATTR_EDGE_END+1] = { [0 ... AF_ATTR_EDGE_END] =
     _MCU_ATTRDEF(0,  EDGE_ATTR, 0, AF_ATTR_EDGE_GET_TIMEOUT, HUBBY, (AF_ATTR_FLAG_WRITABLE | AF_ATTR_FLAG_NOTIFY))
 };
 
@@ -107,7 +109,7 @@ static op_context_t *sOutstandingGets = NULL;
 static op_context_t *sOutstandingSets = NULL;
 static struct event *sPipeEvent = NULL;
 
-#ifndef BUILD_TARGET_RELEASE
+#if 0
 static void dump_attrd_state(void)
 {
     AFLOG_DEBUG3("dump_attrd_state:Attributes");
@@ -1375,8 +1377,6 @@ void on_pipe(evutil_socket_t fd, short what, void *context)
 int main(int argc, char *argv[])
 {
     int retVal = 0;
-    int transPoolStarted = 0;
-    int opPoolStarted = 0;
 
     openlog("attrd", LOG_PID, LOG_USER);
 

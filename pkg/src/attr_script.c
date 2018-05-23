@@ -12,6 +12,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <ctype.h>
 #include "attr_script.h"
 #include "value_formats.h"
 #include "af_log.h"
@@ -19,6 +20,7 @@
 #include "af_mempool.h"
 
 #define ATTR_SCRIPT_FILE_NAME "/etc/af_events.conf"
+
 
 typedef enum {
     ENTRY_TYPE_INIT = 0,
@@ -31,7 +33,7 @@ typedef struct script_entry_struct {
     struct script_entry_struct *next;
     uint32_t attrId;
     char *path;
-    value_format_t format;
+    af_attr_type_t format;
     entry_type_t type;
 } script_entry_t;
 
@@ -68,18 +70,18 @@ typedef struct pid_entry_struct {
             uint16_t getId;
             uint16_t size;
             uint8_t done;
-        } g;
+        } get;
         struct {
             attr_value_t *v;
             void *a;
             char *vs;
             uint16_t clientId;
             uint16_t setId;
-        } s;
+        } set;
         struct {
             attr_value_t *v;
             char *vs;
-        } n;
+        } notify;
     } u;
 } pid_entry_t;
 
@@ -138,7 +140,7 @@ static void free_paths(void)
     s_pathPool = NULL;
 }
 
-static void add_script(entry_type_t entryType, uint32_t attrId, value_format_t format, char *actualPath, int lineno)
+static void add_script(entry_type_t entryType, uint32_t attrId, af_attr_type_t format, char *actualPath, int lineno)
 {
     script_entry_t *s = (script_entry_t *)af_mempool_alloc(s_scriptPool);
     if (s != NULL) {
@@ -258,39 +260,39 @@ static void handle_sigchld(evutil_socket_t fd, short what, void *arg)
         switch (pe->script->type) {
             case ENTRY_TYPE_GET : {
                 /* shut down the pipe event */
-                if (pe->u.g.pipeEvent) {
-                    event_del(pe->u.g.pipeEvent);
-                    event_free(pe->u.g.pipeEvent);
+                if (pe->u.get.pipeEvent) {
+                    event_del(pe->u.get.pipeEvent);
+                    event_free(pe->u.get.pipeEvent);
                 }
 
                 if (returnStatus == AF_ATTR_STATUS_OK) {
-                    if (pe->u.g.value != NULL && pe->u.g.size > 0) {
+                    if (pe->u.get.value != NULL && pe->u.get.size > 0) {
                         int sendSize = 0;
 
-                        uint8_t *sendValue = vf_alloc_and_convert_input_value(pe->script->format, pe->u.g.value, &sendSize);
+                        uint8_t *sendValue = vf_alloc_and_convert_input_value(pe->script->format, pe->u.get.value, &sendSize);
                         if (sendValue != NULL) {
-                            send_attrd_get_response(returnStatus, pe->u.g.seqNum, pe->u.g.getId, sendValue, sendSize);
+                            send_attrd_get_response(returnStatus, pe->u.get.seqNum, pe->u.get.getId, sendValue, sendSize);
                             free(sendValue);
                         } else {
                             AFLOG_ERR("handle_sigchld_sendSize:sendSize=%d", sendSize);
                         }
-                        free(pe->u.g.value);
+                        free(pe->u.get.value);
                     } else {
                         AFLOG_WARNING("handle_sigcld_script_get_empty:path=%s,attrId=%d", pe->script->path, pe->script->attrId);
                     }
                 } else {
-                    send_attrd_get_response(returnStatus, pe->u.g.seqNum, pe->u.g.getId, NULL, 0);
+                    send_attrd_get_response(returnStatus, pe->u.get.seqNum, pe->u.get.getId, NULL, 0);
                 }
                 break;
             }
 
             case ENTRY_TYPE_SET :
-                send_attrd_set_response(returnStatus, pe->u.s.clientId, pe->u.s.setId, pe->u.s.v, pe->u.s.a);
-                free(pe->u.s.vs);
+                send_attrd_set_response(returnStatus, pe->u.set.clientId, pe->u.set.setId, pe->u.set.v, pe->u.set.a);
+                free(pe->u.set.vs);
                 break;
 
             case ENTRY_TYPE_NOTIFY :
-                free(pe->u.n.vs);
+                free(pe->u.notify.vs);
                 break;
 
             default :
@@ -313,7 +315,7 @@ static void handle_line(int lineno, char **tokens, int nt)
     if (typeToken == 'i' || typeToken == 'n' || typeToken == 's' || typeToken == 'g') {
 
         char *path;
-        value_format_t format = VALUE_FORMAT_UNKNOWN;
+        af_attr_type_t format = AF_ATTR_TYPE_UNKNOWN;
         uint32_t attrId = 0;
 
         if (typeToken == 'i') {
@@ -324,7 +326,7 @@ static void handle_line(int lineno, char **tokens, int nt)
                 return;
             }
         } else {
-            if (nt == 4) {
+            if (nt == 3) {
                 errno = 0;
                 attrId = strtoul(tokens[1], NULL, 10);
                 if (errno != 0) {
@@ -335,18 +337,18 @@ static void handle_line(int lineno, char **tokens, int nt)
                     AFLOG_DEBUG3("handle_line_edge:line=%d,attrId=%d:edge attribute ignored", lineno, attrId);
                     return;
                 }
-                format = vf_get_format_for_name(tokens[2]);
-                if (format == VALUE_FORMAT_UNKNOWN) {
-                    AFLOG_ERR("handle_line_format:line=%d:format=%s:value format is unknown", lineno, tokens[2]);
+                format = vf_get_type_for_attribute(attrId);
+                if (format == AF_ATTR_TYPE_UNKNOWN) {
+                    AFLOG_ERR("handle_line_format:line=%d:attrId=%d:attribute is unknown", lineno, attrId);
                     return;
                 }
-                path = tokens[3];
+                path = tokens[2];
                 if (path[0] != '/') {
                     AFLOG_ERR("handle_line_path:line=%d:path=%s:path must be absolute", lineno, path);
                     return;
                 }
             } else {
-                AFLOG_ERR("handle_line_other_nt:line=%d,nt=%d,expected=4:entry has the incorrect number of parameters", lineno, nt);
+                AFLOG_ERR("handle_line_other_nt:line=%d,nt=%d,expected=3:entry has the incorrect number of parameters", lineno, nt);
                 return;
             }
         }
@@ -363,12 +365,12 @@ static void handle_line(int lineno, char **tokens, int nt)
                 break;
             case 'n' :
                 add_script(ENTRY_TYPE_NOTIFY, attrId, format, actualPath, lineno);
-                AFLOG_DEBUG3("handle_line_add_notify:attrId=%d,format=%s,path=%s", attrId, vf_get_name_for_format(format), actualPath);
+                AFLOG_DEBUG3("handle_line_add_notify:attrId=%d,path=%s", attrId, actualPath);
                 break;
             case 's' :
                 if (find_script_with_attr_id_and_type(attrId, ENTRY_TYPE_SET) == NULL) {
                     add_script(ENTRY_TYPE_SET, attrId, format, actualPath, lineno);
-                    AFLOG_DEBUG3("handle_line_add_set:attrId=%d,format=%s,path=%s", attrId, vf_get_name_for_format(format), actualPath);
+                    AFLOG_DEBUG3("handle_line_add_set:attrId=%d,path=%s", attrId, actualPath);
                 } else {
                     AFLOG_WARNING("handle_line_set_dup:attrId=%d,lineno=%d:set script for this attribute already exists; ignoring", attrId, lineno);
                 }
@@ -376,7 +378,7 @@ static void handle_line(int lineno, char **tokens, int nt)
             case 'g' :
                 if (find_script_with_attr_id_and_type(attrId, ENTRY_TYPE_GET) == NULL) {
                     add_script(ENTRY_TYPE_GET, attrId, format, actualPath, lineno);
-                    AFLOG_DEBUG3("handle_line_add_get:attrId=%d,format=%s,path=%s", attrId, vf_get_name_for_format(format), actualPath);
+                    AFLOG_DEBUG3("handle_line_add_get:attrId=%d,path=%s", attrId, actualPath);
                 } else {
                     AFLOG_WARNING("handle_line_get_dup:attrId=%d,lineno=%d:get script for this attribute already exists; ignoring", attrId, lineno);
                 }
@@ -385,8 +387,10 @@ static void handle_line(int lineno, char **tokens, int nt)
                 break;
         }
 
+    } else if (type_token == 'o') {
+        AFLOG_INFO("handle_line_ignored:lineNum=%d,token=%s:token not handled by attrd; ignored", lineno, tokens[0]);
     } else {
-        AFLOG_ERR("handle_line_token:lineNum=%d,token=%s:unknown token", lineno, tokens[0]);
+        AFLOG_ERR("handle_line_token:lineNum=%d,token=%s:unknown token; ignored", lineno, tokens[0]);
     }
 }
 
@@ -437,7 +441,7 @@ static void on_pipe_read(evutil_socket_t fd, short what, void *arg)
     }
 
     /* if we've already finished reading the value, ignore the rest */
-    if (pe->u.g.done) {
+    if (pe->u.get.done) {
         return;
     }
 
@@ -446,27 +450,27 @@ static void on_pipe_read(evutil_socket_t fd, short what, void *arg)
     for (i = 0; i < bytesRead; i++) {
         if (buf[i] == '\n') {
             bytesRead = i;
-            pe->u.g.done = 1;
+            pe->u.get.done = 1;
             break;
         }
     }
 
-    if (pe->u.g.value == NULL && pe->u.g.size != 0) {
-        AFLOG_ERR("on_pipe_read_size_nz:size=%d", pe->u.g.size);
+    if (pe->u.get.value == NULL && pe->u.get.size != 0) {
+        AFLOG_ERR("on_pipe_read_size_nz:size=%d", pe->u.get.size);
         return;
     }
 
     /* realloc(NULL, size) is the same as malloc(size) */
     /* allow space for string termination */
-    pe->u.g.value = realloc(pe->u.g.value, pe->u.g.size + bytesRead + 1);
-    if (pe->u.g.value == NULL) {
+    pe->u.get.value = realloc(pe->u.get.value, pe->u.get.size + bytesRead + 1);
+    if (pe->u.get.value == NULL) {
         AFLOG_ERR("on_pipe_read_realloc::");
         return;
     }
-    memcpy(&pe->u.g.value[pe->u.g.size], buf, bytesRead);
-    pe->u.g.size += bytesRead;
+    memcpy(&pe->u.get.value[pe->u.get.size], buf, bytesRead);
+    pe->u.get.size += bytesRead;
     /* preemptively terminate string; note that we added a byte in the realloc for this */
-    pe->u.g.value[pe->u.g.size] = '\0';
+    pe->u.get.value[pe->u.get.size] = '\0';
 }
 
 static void on_pid_timeout(evutil_socket_t fd, short what, void *arg)
@@ -507,10 +511,10 @@ static void script_exec(pid_entry_t *p)
         case ENTRY_TYPE_SET :
         case ENTRY_TYPE_NOTIFY :
             if (p->script->type == ENTRY_TYPE_NOTIFY) {
-                vs = vf_alloc_and_convert_output_value_for_execv(p->script->format, p->u.n.v->value, p->u.n.v->size);
-                attr_value_dec_ref_count(p->u.n.v);
+                vs = vf_alloc_and_convert_output_value_for_execv(p->script->format, p->u.notify.v->value, p->u.notify.v->size);
+                attr_value_dec_ref_count(p->u.notify.v);
             } else {
-                vs = vf_alloc_and_convert_output_value_for_execv(p->script->format, p->u.s.v->value, p->u.s.v->size);
+                vs = vf_alloc_and_convert_output_value_for_execv(p->script->format, p->u.set.v->value, p->u.set.v->size);
                 /* we do not decrement the ref count because we need it to notify listeners later */
             }
             if (vs == NULL) {
@@ -582,9 +586,9 @@ static void script_exec(pid_entry_t *p)
             close(pipeFds[1]);
 
             /* Add an event for the fd[0] */
-            pe->u.g.pipeFd = pipeFds[0];
+            pe->u.get.pipeFd = pipeFds[0];
             struct event *ev = event_new(s_base, pipeFds[0], EV_READ | EV_PERSIST, on_pipe_read, pe);
-            pe->u.g.pipeEvent = ev;
+            pe->u.get.pipeEvent = ev;
             if (ev == NULL) {
                 AFLOG_ERR("script_exec_pipe_event::failed to allocate event");
                 /* we're in a low memory situation and don't attempt to clean up at this point */
@@ -749,7 +753,7 @@ void script_notify(attr_value_t *v)
             p.script = e;
             /* hold a reference until script finishes */
             attr_value_inc_ref_count(v);
-            p.u.n.v = v;
+            p.u.notify.v = v;
             script_exec(&p);
         }
     }
@@ -768,13 +772,13 @@ int script_owner_set(uint16_t clientId, uint16_t setId, attr_value_t *v, void *a
         memset(&p, 0, sizeof(p));
 
         p.script = e;
-        p.u.s.clientId = clientId;
-        p.u.s.setId = setId;
+        p.u.set.clientId = clientId;
+        p.u.set.setId = setId;
 
         /* increment the attribute value ref count; we'll decrement when script finishes */
         attr_value_inc_ref_count(v);
-        p.u.s.v = v;
-        p.u.s.a = a;
+        p.u.set.v = v;
+        p.u.set.a = a;
 
         script_exec(&p);
         return 0;
@@ -791,10 +795,10 @@ int script_get(uint32_t attrId, uint32_t seqNum, uint16_t getId)
         memset(&p, 0, sizeof(p));
 
         p.script = e;
-        p.u.g.value = NULL;
-        p.u.g.size = 0;
-        p.u.g.seqNum = seqNum;
-        p.u.g.getId = getId;
+        p.u.get.value = NULL;
+        p.u.get.size = 0;
+        p.u.get.seqNum = seqNum;
+        p.u.get.getId = getId;
 
         script_exec(&p);
         return 0;

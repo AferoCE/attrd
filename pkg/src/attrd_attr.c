@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <event2/event.h>
+#include <time.h>
 #include "af_log.h"
 #include "af_attr_client.h"
 #include "attrd_attr.h"
