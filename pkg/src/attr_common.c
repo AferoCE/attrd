@@ -679,20 +679,18 @@ static int op_remove(op_context_t **head, op_context_t *g)
 void op_cleanup(op_context_t **head, op_context_t *o)
 {
     if (o != NULL) {
-        uint16_t getId = o->opId;
-
         /* cancel the timer, if it exists */
         if (o->timeoutEvent) {
             evtimer_del(o->timeoutEvent);
             event_free(o->timeoutEvent);
             o->timeoutEvent = NULL;
-            AFLOG_DEBUG3("removed_timer:opId=%d", getId);
+            AFLOG_DEBUG3("removed_timer:opId=%d", o->opId);
         }
 
         /* remove the get from the list, if it's there */
         if (head != NULL) {
             op_remove(head, o);
-            AFLOG_DEBUG3("removed_op:opId=%d", getId);
+            AFLOG_DEBUG3("removed_op:opId=%d", o->opId);
         }
         op_pool_free(o);
     }

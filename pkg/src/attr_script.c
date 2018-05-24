@@ -387,8 +387,8 @@ static void handle_line(int lineno, char **tokens, int nt)
                 break;
         }
 
-    } else if (type_token == 'o') {
-        AFLOG_INFO("handle_line_ignored:lineNum=%d,token=%s:token not handled by attrd; ignored", lineno, tokens[0]);
+    } else if (typeToken == 'o') {
+        AFLOG_DEBUG3("handle_line_ignored:lineNum=%d,token=%s:token not handled by attrd; ignored", lineno, tokens[0]);
     } else {
         AFLOG_ERR("handle_line_token:lineNum=%d,token=%s:unknown token; ignored", lineno, tokens[0]);
     }
