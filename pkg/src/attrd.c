@@ -216,6 +216,7 @@ static void notify_register_client_with_ranges(attrd_client_t *client, af_attr_r
             if (attrId >= ranges[j].first && attrId <= ranges[j].last) {
                 /* do not allow owner to register for its own notifications */
                 if (sAttr[i].owner != client) {
+                    AFLOG_DEBUG1("notify_register:client=%s,attrId=%d", sAttrClientNames[client->ownerId], attrId);
                     notify_client_t *nc = (notify_client_t *)af_mempool_alloc(sNotifyClientPool);
                     if (nc != NULL) {
                         /* add to this attribute's notify list */
