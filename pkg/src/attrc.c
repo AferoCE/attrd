@@ -258,14 +258,20 @@ static int parse_params(int argc, char * argv[])
             return ATTRC_OK;
 
         } else if (!strncmp(argv[1], "set", strlen(argv[1])) && argc > 2) {
+            sOp = OP_SET;
             client_attr_t *attr = parse_attribute_id(argv[2]);
             if (!attr) {
                 return ATTRC_ERR;
             }
             sAttrId = attr->id;
             af_attr_type_t argType = attr->type;
-            if (argc > 3) {
-
+            if (argc == 3 && (argType == AF_ATTR_TYPE_BYTES || argType == AF_ATTR_TYPE_UTF8S)) {
+                sSetValue = vf_alloc_and_convert_input_value(argType, "", &sSetValueLength);
+                if (sSetValue == NULL) {
+                    return ATTRC_ERR;
+                }
+                return ATTRC_OK;
+            } else if (argc > 3) {
                 if (param_type_value_match(argType, argv[3]) == 0) {
                     fprintf(stderr, "value type does not match value argument: %s\n", argv[3]);
                     return ATTRC_ERR;
@@ -275,7 +281,6 @@ static int parse_params(int argc, char * argv[])
                 if (sSetValue == NULL) {
                     return ATTRC_ERR;
                 }
-                sOp = OP_SET;
                 return ATTRC_OK;
             }
         }

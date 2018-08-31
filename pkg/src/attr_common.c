@@ -162,9 +162,7 @@ static int trans_rpc_create_rpc_for_transmit(uint8_t *buf, int bufSize, trans_co
         return AF_RPC_ERR_BAD_PARAM;
     }
 
-    if (t->pos == t->attrValue->size) {
-        return 0; // zero length indicates we're done
-    } else if (t->pos > t->attrValue->size) {
+    if (t->pos > t->attrValue->size) {
         AFLOG_ERR("create_rpc_for_xmit_pos:pos=%d,size=%d:", t->pos, t->attrValue->size);
         return AF_RPC_ERR_BAD_PARAM;
     }
@@ -330,7 +328,9 @@ int trans_receive_packet(uint8_t *buf, int bufSize,
         t->transId = trans_new_id();
         t->opId = opId;
         t->pos = pos;
-        memcpy(t->attrValue->value, blob, blobSize);
+        if (blobSize) {
+            memcpy(t->attrValue->value, blob, blobSize);
+        }
 
         /* add this transaction to the list head */
         trans_add(head, t);
@@ -357,7 +357,7 @@ int trans_receive_packet(uint8_t *buf, int bufSize,
             status = AF_ATTR_STATUS_BAD_DATA;
             goto exit;
         }
-        /* grab the new data */
+        /* grab the new data; blobSize cannot be zero */
         memcpy(t->attrValue->value + t->pos, blob, blobSize);
     }
 
@@ -498,9 +498,7 @@ static int trans_transmit_internal (trans_context_t *trans)
     uint8_t txBuf[AF_IPC_MAX_MSGLEN];
     int len = trans_rpc_create_rpc_for_transmit(txBuf, sizeof(txBuf), trans);
 
-    if (len == 0) {
-        return AF_ATTR_STATUS_OK;
-    } else if (len < 0) {
+    if (len < 0) {
         AFLOG_ERR("trans_transmit_len:len=%d:", len);
         return AF_ATTR_STATUS_UNSPECIFIED;
     }
@@ -545,8 +543,12 @@ trans_context_t *trans_alloc (uint32_t attributeId, uint8_t opcode, uint8_t *val
     trans_context_t *t = NULL;
     attr_value_t *a = NULL;
 
-    if (length <= 0 || length > UINT16_MAX || value == NULL) {
-        AFLOG_ERR("af_attr_set_param:length=%d,value_null=%d", length, value == NULL);
+    if (length < 0 || length > UINT16_MAX) {
+        AFLOG_ERR("%s_param:length=%d", __func__, length);
+        return NULL;
+    }
+    if (length > 0 && value == NULL) {
+        AFLOG_ERR("%s_param:length=%d,value=NULL", __func__, length);
         return NULL;
     }
 
@@ -565,7 +567,9 @@ trans_context_t *trans_alloc (uint32_t attributeId, uint8_t opcode, uint8_t *val
 
     t->opcode = opcode;
     t->attrValue = a;
-    memcpy(a->value, value, length);
+    if (length) {
+        memcpy(a->value, value, length);
+    }
 
     return t;
 }

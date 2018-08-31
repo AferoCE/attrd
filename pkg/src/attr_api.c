@@ -525,19 +525,24 @@ static void close_callback (int status, void *context)
 
 int af_attr_open (struct event_base *base,
                   char *clientName,
-				  uint16_t numListenRanges, af_attr_range_t *listenRanges,
+                  uint16_t numListenRanges, af_attr_range_t *listenRanges,
                   af_attr_notify_callback_t notifyCb,
-				  af_attr_set_request_callback_t ownerSetCb,
-				  af_attr_get_request_callback_t getReqCb,
-				  af_attr_status_callback_t closeCb,
-				  af_attr_status_callback_t openCb,
-				  void *context)
+                  af_attr_set_request_callback_t ownerSetCb,
+                  af_attr_get_request_callback_t getReqCb,
+                  af_attr_status_callback_t closeCb,
+                  af_attr_status_callback_t openCb,
+                  void *context)
 {
     int status = AF_ATTR_STATUS_OK;
 
     if (base == NULL || clientName == NULL || numListenRanges > AF_ATTR_MAX_LISTEN_RANGES) {
         AFLOG_ERR("af_attr_open_param:base_null=%d,clientName_null=%d,numListenRanges=%d:",
                   base == NULL, clientName == NULL, numListenRanges);
+        return AF_ATTR_STATUS_BAD_PARAM;
+    }
+
+    if (numListenRanges > 0 && listenRanges == NULL) {
+        AFLOG_ERR("af_attr_open_param:numListenRanges=%d,listenRanges=NULL", numListenRanges);
         return AF_ATTR_STATUS_BAD_PARAM;
     }
 
@@ -666,13 +671,19 @@ int af_attr_set (uint32_t attributeId, uint8_t *value, int length, af_attr_set_r
         return AF_ATTR_STATUS_NOT_OPEN;
     }
 
-    if (value == NULL || length <= 0 || length >= UINT16_MAX) {
+    if (length < 0 || length >= UINT16_MAX) {
+        AFLOG_ERR("%s_param:length=%d", __func__, length);
+        return AF_ATTR_STATUS_BAD_PARAM;
+    }
+
+    if (length > 0 && value == NULL) {
+        AFLOG_ERR("%s_param:length=%d,value=NULL", __func__, length);
         return AF_ATTR_STATUS_BAD_PARAM;
     }
 
     s = op_alloc_with_timeout(sClient->base, AF_ATTR_SET_TIMEOUT, handle_set_daemon_timeout);
     if (s == NULL) {
-        AFLOG_ERR("af_attr_set_alloc::can't allocate set context");
+        AFLOG_ERR("%s_alloc::can't allocate set context", __func__);
         status = AF_ATTR_STATUS_NO_SPACE;
         goto error;
     }
@@ -976,10 +987,13 @@ int af_attr_send_get_response (int status, uint16_t getId, uint8_t *value, int l
     }
 
     /* check parameters */
-    if (getId == 0 || status < 0 || status >= AF_ATTR_STATUS_MAX ||
-        (status == AF_ATTR_STATUS_OK && (value == NULL || length <= 0 || length >= UINT16_MAX))) {
-        AFLOG_ERR("af_attr_send_get_resp_param:status=%d,getId=%d,value_null=%d,length=%d",
-                  status, getId, value == NULL, length);
+    if (getId == 0 || status < 0 || status >= AF_ATTR_STATUS_MAX) {
+        AFLOG_ERR("%s_param:status=%d,getId=%d", __func__, status, getId);
+        return AF_ATTR_STATUS_BAD_PARAM;
+    }
+
+    if (status == AF_ATTR_STATUS_OK && (length < 0 || length >= UINT16_MAX || (length > 0 && value == NULL))) {
+        AFLOG_ERR("%s_param:status=%d,length=%d,value_NULL=%d", __func__, status, length, value == NULL);
         return AF_ATTR_STATUS_BAD_PARAM;
     }
 

@@ -107,8 +107,7 @@ uint8_t *vf_alloc_and_convert_input_value(af_attr_type_t type, const char *val, 
                 return NULL;
             }
             setValue = (uint8_t *)malloc(sizeof(int8_t));
-            if (setValue == NULL)
-            {
+            if (setValue == NULL) {
                 fprintf(stderr, "Memory allocation error\n");
                 AFLOG_ERR("vf_alloc_and_convert_input_val_mem::can't allocate space for value");
                 return NULL;
@@ -128,8 +127,7 @@ uint8_t *vf_alloc_and_convert_input_value(af_attr_type_t type, const char *val, 
                 return NULL;
             }
             setValue = (uint8_t *)malloc(sizeof(int16_t));
-            if (setValue == NULL)
-            {
+            if (setValue == NULL) {
                 fprintf(stderr, "Memory allocation error\n");
                 AFLOG_ERR("vf_alloc_and_convert_input_val_mem::can't allocate space for value");
                 return NULL;
@@ -148,8 +146,7 @@ uint8_t *vf_alloc_and_convert_input_value(af_attr_type_t type, const char *val, 
                 return NULL;
             }
             setValue = (uint8_t *)malloc(sizeof(int32_t));
-            if (setValue == NULL)
-            {
+            if (setValue == NULL) {
                 fprintf(stderr, "Memory allocation error\n");
                 AFLOG_ERR("vf_alloc_and_convert_input_val_mem::can't allocate space for value");
                 return NULL;
@@ -163,8 +160,7 @@ uint8_t *vf_alloc_and_convert_input_value(af_attr_type_t type, const char *val, 
         {
             int size = strlen(val) + 1;
             setValue = (uint8_t *)malloc(size);
-            if (setValue == NULL)
-            {
+            if (setValue == NULL) {
                 fprintf(stderr, "Memory allocation error\n");
                 AFLOG_ERR("vf_alloc_and_convert_input_val_mem::can't allocate space for value");
                 return NULL;
@@ -187,8 +183,20 @@ uint8_t *vf_alloc_and_convert_input_value(af_attr_type_t type, const char *val, 
                 }
                 tmp++;
             }
-            if (l == 0 || (l % 2) != 0)
-            {
+
+            if (l == 0) {
+                /* NULL value case: allocate something we can free later */
+                setValue = (uint8_t *)malloc(1);
+                if (setValue == NULL) {
+                    fprintf(stderr, "Memory allocation error\n");
+                    AFLOG_ERR("vf_alloc_and_convert_input_val_mem0::can't allocate space for value");
+                    return NULL;
+                }
+                *lengthP = 0;
+                break;
+            }
+
+            if ((l % 2) != 0) {
                 fprintf(stderr, "hex values must have an even number of digits in param\n");
                 AFLOG_ERR("vf_alloc_and_convert_input_value_xlen:len=%d", l);
                 return NULL;
@@ -196,8 +204,7 @@ uint8_t *vf_alloc_and_convert_input_value(af_attr_type_t type, const char *val, 
 
             int len = l/2;
             setValue = (uint8_t *)malloc(len);
-            if (setValue == NULL)
-            {
+            if (setValue == NULL) {
                 fprintf(stderr, "Memory allocation error\n");
                 AFLOG_ERR("vf_alloc_and_convert_input_val_mem::can't allocate space for value");
                 return NULL;
@@ -253,6 +260,7 @@ char *vf_alloc_and_convert_output_value(af_attr_type_t argType, uint8_t *value, 
         case AF_ATTR_TYPE_BYTES:
             output = (char *)malloc(length * 2 + 1); /* number of nybbles + null terminator */
             if (output != NULL) {
+                output[0] = '\0'; /* in case the length is zero */
                 for (int i = 0; i<length; i++) {
                     sprintf (output + (i * 2), "%02x", *((uint8_t *)value+i));
                 }
