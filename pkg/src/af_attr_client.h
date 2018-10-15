@@ -22,7 +22,7 @@
     _AF_ATTR_STATUS_DEF(TOO_MANY_TRANSACTIONS), \
     _AF_ATTR_STATUS_DEF(TRANSACTION_NOT_FOUND), \
     _AF_ATTR_STATUS_DEF(BAD_PARAM), \
-    _AF_ATTR_STATUS_DEF(NOT_WRITABLE), \
+    _AF_ATTR_STATUS_DEF(FORBIDDEN), \
     _AF_ATTR_STATUS_DEF(NOT_OPEN), \
     _AF_ATTR_STATUS_DEF(ATTR_ID_NOT_FOUND), \
     _AF_ATTR_STATUS_DEF(NO_DAEMON), \
@@ -71,8 +71,8 @@ typedef void (*af_attr_get_request_callback_t) (uint32_t attributeId, uint16_t g
 typedef void (*af_attr_status_callback_t) (int status, void *context);
 
 typedef struct {
-	uint32_t first;
-	uint32_t last;
+    uint32_t first;
+    uint32_t last;
 } af_attr_range_t;
 
 /* af_attr_open
@@ -172,4 +172,8 @@ uint32_t af_attr_get_uint32(uint8_t *src);
 void af_attr_store_int32(uint8_t *dst, int32_t value);
 int32_t af_attr_get_int32(uint8_t *src);
 
+void af_attr_store_uint64(uint8_t *dst, uint64_t value);
+uint64_t af_attr_get_uint64(uint8_t *src);
+void af_attr_store_int64(uint8_t *dst, int64_t value);
+int64_t af_attr_get_int64(uint8_t *src);
 #endif // __AF_ATTR_CLIENT_H__

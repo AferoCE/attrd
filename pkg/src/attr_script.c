@@ -33,7 +33,6 @@ typedef struct script_entry_struct {
     struct script_entry_struct *next;
     uint32_t attrId;
     char *path;
-    af_attr_type_t format;
     entry_type_t type;
 } script_entry_t;
 
@@ -61,6 +60,9 @@ typedef struct pid_entry_struct {
     pid_t pid;
     script_entry_t *script;
     struct event *event;
+    uint8_t format;
+    uint8_t pad;
+    uint16_t pad2;
     union {
         struct {
             struct event *pipeEvent;
@@ -70,6 +72,8 @@ typedef struct pid_entry_struct {
             uint16_t getId;
             uint16_t size;
             uint8_t done;
+            uint8_t pad;
+            uint16_t pad2;
         } get;
         struct {
             attr_value_t *v;
@@ -140,14 +144,13 @@ static void free_paths(void)
     s_pathPool = NULL;
 }
 
-static void add_script(entry_type_t entryType, uint32_t attrId, af_attr_type_t format, char *actualPath, int lineno)
+static void add_script(entry_type_t entryType, uint32_t attrId, char *actualPath, int lineno)
 {
     script_entry_t *s = (script_entry_t *)af_mempool_alloc(s_scriptPool);
     if (s != NULL) {
         memset(s, 0, sizeof(script_entry_t));
 
         s->attrId = attrId;
-        s->format = format;
         s->path = actualPath;
         s->type = entryType;
 
@@ -269,7 +272,7 @@ static void handle_sigchld(evutil_socket_t fd, short what, void *arg)
                     if (pe->u.get.value != NULL && pe->u.get.size > 0) {
                         int sendSize = 0;
 
-                        uint8_t *sendValue = vf_alloc_and_convert_input_value(pe->script->format, pe->u.get.value, &sendSize);
+                        uint8_t *sendValue = vf_alloc_and_convert_input_value(pe->format, pe->u.get.value, &sendSize);
                         if (sendValue != NULL) {
                             send_attrd_get_response(returnStatus, pe->u.get.seqNum, pe->u.get.getId, sendValue, sendSize);
                             free(sendValue);
@@ -315,7 +318,6 @@ static void handle_line(int lineno, char **tokens, int nt)
     if (typeToken == 'i' || typeToken == 'n' || typeToken == 's' || typeToken == 'g') {
 
         char *path;
-        af_attr_type_t format = AF_ATTR_TYPE_UNKNOWN;
         uint32_t attrId = 0;
 
         if (typeToken == 'i') {
@@ -331,15 +333,6 @@ static void handle_line(int lineno, char **tokens, int nt)
                 attrId = strtoul(tokens[1], NULL, 10);
                 if (errno != 0) {
                     AFLOG_ERR("handle_line_attrId:line=%d,errno=%d:failed to convert attribute ID to uint32_t", lineno, errno);
-                    return;
-                }
-                if (attrId < 1024) {
-                    AFLOG_DEBUG3("handle_line_edge:line=%d,attrId=%d:edge attribute ignored", lineno, attrId);
-                    return;
-                }
-                format = vf_get_type_for_attribute(attrId);
-                if (format == AF_ATTR_TYPE_UNKNOWN) {
-                    AFLOG_ERR("handle_line_format:line=%d:attrId=%d:attribute is unknown", lineno, attrId);
                     return;
                 }
                 path = tokens[2];
@@ -360,16 +353,16 @@ static void handle_line(int lineno, char **tokens, int nt)
 
         switch (typeToken) {
             case 'i' :
-                add_script(ENTRY_TYPE_INIT, attrId, format, actualPath, lineno);
+                add_script(ENTRY_TYPE_INIT, attrId, actualPath, lineno);
                 AFLOG_DEBUG3("handle_line_add_init:path=%s", actualPath);
                 break;
             case 'n' :
-                add_script(ENTRY_TYPE_NOTIFY, attrId, format, actualPath, lineno);
+                add_script(ENTRY_TYPE_NOTIFY, attrId, actualPath, lineno);
                 AFLOG_DEBUG3("handle_line_add_notify:attrId=%d,path=%s", attrId, actualPath);
                 break;
             case 's' :
                 if (find_script_with_attr_id_and_type(attrId, ENTRY_TYPE_SET) == NULL) {
-                    add_script(ENTRY_TYPE_SET, attrId, format, actualPath, lineno);
+                    add_script(ENTRY_TYPE_SET, attrId, actualPath, lineno);
                     AFLOG_DEBUG3("handle_line_add_set:attrId=%d,path=%s", attrId, actualPath);
                 } else {
                     AFLOG_WARNING("handle_line_set_dup:attrId=%d,lineno=%d:set script for this attribute already exists; ignoring", attrId, lineno);
@@ -377,7 +370,7 @@ static void handle_line(int lineno, char **tokens, int nt)
                 break;
             case 'g' :
                 if (find_script_with_attr_id_and_type(attrId, ENTRY_TYPE_GET) == NULL) {
-                    add_script(ENTRY_TYPE_GET, attrId, format, actualPath, lineno);
+                    add_script(ENTRY_TYPE_GET, attrId, actualPath, lineno);
                     AFLOG_DEBUG3("handle_line_add_get:attrId=%d,path=%s", attrId, actualPath);
                 } else {
                     AFLOG_WARNING("handle_line_get_dup:attrId=%d,lineno=%d:get script for this attribute already exists; ignoring", attrId, lineno);
@@ -511,10 +504,10 @@ static void script_exec(pid_entry_t *p)
         case ENTRY_TYPE_SET :
         case ENTRY_TYPE_NOTIFY :
             if (p->script->type == ENTRY_TYPE_NOTIFY) {
-                vs = vf_alloc_and_convert_output_value_for_execv(p->script->format, p->u.notify.v->value, p->u.notify.v->size);
+                vs = vf_alloc_and_convert_output_value_for_execv(p->format, p->u.notify.v->value, p->u.notify.v->size);
                 attr_value_dec_ref_count(p->u.notify.v);
             } else {
-                vs = vf_alloc_and_convert_output_value_for_execv(p->script->format, p->u.set.v->value, p->u.set.v->size);
+                vs = vf_alloc_and_convert_output_value_for_execv(p->format, p->u.set.v->value, p->u.set.v->size);
                 /* we do not decrement the ref count because we need it to notify listeners later */
             }
             if (vs == NULL) {
@@ -735,7 +728,7 @@ void script_init(void)
     }
 }
 
-void script_notify(attr_value_t *v)
+void script_notify(attr_value_t *v, af_attr_type_t aType)
 {
     if (v == NULL) {
         AFLOG_ERR("script_notify_NULL");
@@ -751,6 +744,7 @@ void script_notify(attr_value_t *v)
             memset(&p, 0, sizeof(p));
 
             p.script = e;
+            p.format = aType;
             /* hold a reference until script finishes */
             attr_value_inc_ref_count(v);
             p.u.notify.v = v;
@@ -759,7 +753,7 @@ void script_notify(attr_value_t *v)
     }
 }
 
-int script_owner_set(uint16_t clientId, uint16_t setId, attr_value_t *v, void *a)
+int script_owner_set(uint16_t clientId, uint16_t setId, attr_value_t *v, af_attr_type_t aType, void *a)
 {
     if (v == NULL || a == NULL) {
         AFLOG_ERR("script_owner_set_param:v_NULL=%d,a_NULL=%d", v==NULL, a==NULL);
@@ -772,6 +766,7 @@ int script_owner_set(uint16_t clientId, uint16_t setId, attr_value_t *v, void *a
         memset(&p, 0, sizeof(p));
 
         p.script = e;
+        p.format = aType;
         p.u.set.clientId = clientId;
         p.u.set.setId = setId;
 
@@ -787,7 +782,7 @@ int script_owner_set(uint16_t clientId, uint16_t setId, attr_value_t *v, void *a
     }
 }
 
-int script_get(uint32_t attrId, uint32_t seqNum, uint16_t getId)
+int script_get(uint32_t attrId, uint32_t seqNum, uint16_t getId, af_attr_type_t aType)
 {
     script_entry_t *e = find_script_with_attr_id_and_type(attrId, ENTRY_TYPE_GET);
     if (e) {
@@ -795,6 +790,7 @@ int script_get(uint32_t attrId, uint32_t seqNum, uint16_t getId)
         memset(&p, 0, sizeof(p));
 
         p.script = e;
+        p.format = aType;
         p.u.get.value = NULL;
         p.u.get.size = 0;
         p.u.get.seqNum = seqNum;

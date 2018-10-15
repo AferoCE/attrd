@@ -97,7 +97,8 @@
 /* reference counted memory used for notification transactions */
 /* if you need to free this in an exceptional case, use free() */
 typedef struct {
-    uint16_t refCount;
+    uint8_t refCount;
+    uint8_t type;
     uint16_t size;
     uint32_t attrId;
     uint8_t *value;
@@ -218,7 +219,7 @@ typedef struct op_context_struct {
         client_op_context_t c;
         server_get_op_context_t sg;
         server_set_op_context_t ss;
-	owner_set_op_context_t o;
+        owner_set_op_context_t o;
     } u;
     struct op_context_struct *next;
 } op_context_t;

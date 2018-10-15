@@ -845,3 +845,56 @@ int32_t af_attr_get_int32(uint8_t *src)
     uint32_t valueU = src[0] | (src[1] << 8) | (src[2] << 16) | (src[3] << 24);
     return *(int32_t *)&valueU;
 }
+
+void af_attr_store_uint64(uint8_t *dst, uint64_t value)
+{
+    if (dst == NULL) {
+        return;
+    }
+
+    *dst++ = value & 0xff;
+    *dst++ = (value & 0xff00) >> 8;
+    *dst++ = (value & 0xff0000) >> 16;
+    *dst++ = (value & 0xff000000) >> 24;
+    *dst++ = (value & 0xff00000000) >> 32;
+    *dst++ = (value & 0xff0000000000) >> 40;
+    *dst++ = (value & 0xff000000000000) >> 48;
+    *dst++ = (value & 0xff00000000000000) >> 56;
+}
+
+uint64_t af_attr_get_uint64(uint8_t *src)
+{
+    if (src == NULL) {
+        return 0;
+    }
+
+    return src[0] | (src[1] << 8) | (src[2] << 16) | (src[3] << 24) | ((uint64_t)src[4] << 32) | ((uint64_t)src[5] << 40) | ((uint64_t)src[6] << 48) | ((uint64_t)src[7] << 56);
+}
+
+void af_attr_store_int64(uint8_t *dst, int64_t value)
+{
+    if (dst == NULL) {
+        return;
+    }
+
+    uint64_t valueU = *(uint64_t *)&value;
+    *dst++ = valueU & 0xff;
+    *dst++ = (valueU & 0xff00) >> 8;
+    *dst++ = (valueU & 0xff0000) >> 16;
+    *dst++ = (valueU & 0xff000000) >> 24;
+    *dst++ = (valueU & 0xff00000000) >> 32;
+    *dst++ = (valueU & 0xff0000000000) >> 40;
+    *dst++ = (valueU & 0xff000000000000) >> 48;
+    *dst++ = (valueU & 0xff00000000000000) >> 56;
+}
+
+int64_t af_attr_get_int64(uint8_t *src)
+{
+    if (src == NULL) {
+        return 0;
+    }
+
+    uint64_t valueU = src[0] | (src[1] << 8) | (src[2] << 16) | (src[3] << 24) | ((uint64_t)src[4] << 32) | ((uint64_t)src[5] << 40) | ((uint64_t)src[6] << 48) | ((uint64_t)src[7] << 56);
+    return *(int64_t *)&valueU;
+}
+

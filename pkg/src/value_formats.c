@@ -98,6 +98,23 @@ uint8_t *vf_alloc_and_convert_input_value(af_attr_type_t type, const char *val, 
     }
 
     switch (type) {
+        case AF_ATTR_TYPE_BOOLEAN:
+        {
+            int32_t long_val = strtol(val, NULL, 10);
+            setValue = (uint8_t *)malloc(sizeof(int8_t));
+            if (setValue == NULL) {
+                fprintf(stderr, "Memory allocation error\n");
+                AFLOG_ERR("vf_alloc_and_convert_input_val_mem::can't allocate space for value");
+                return NULL;
+            }
+            if (long_val) {
+                *setValue = 1;
+            } else {
+                *setValue = 0;
+            }
+            *lengthP = sizeof(uint8_t);
+            break;
+        }
         case AF_ATTR_TYPE_SINT8:
         {
             int32_t long_val = strtol(val, NULL, 10);
@@ -232,6 +249,11 @@ char *vf_alloc_and_convert_output_value(af_attr_type_t argType, uint8_t *value, 
     char *output = NULL;
 
     switch (argType) {
+        case AF_ATTR_TYPE_BOOLEAN:
+            output = (char *)malloc(2); /* either "0" or "1" */
+            output[0] = *value ? '1' : '0';
+            output[1] = '\0';
+            break;
         case AF_ATTR_TYPE_UTF8S:
             output = (char *)malloc(length + 1);
             if (output != NULL) {

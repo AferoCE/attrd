@@ -16,8 +16,9 @@
 #include "af_attr_client.h"
 #include "af_log.h"
 #include "value_formats.h"
+#include "af_profile.h"
 
-#define EDGE_ATTR_OWNER_NAME_PREFIX     "EDGE_ATTR_"
+#define EDGE_ATTR_OWNER_NAME_PREFIX     "EDGED_"
 #define EDGE_ATTR_OWNER_NAME_PREFIX_LEN (sizeof(EDGE_ATTR_OWNER_NAME_PREFIX)-1)
 
 #define _AF_ATTR_ATTRDEF(_attr_id_num,_attr_id_name,_attr_type,_attr_get_timeout,_attr_owner,_attr_flags) \
@@ -213,6 +214,8 @@ param_type_value_match(af_attr_type_t type, const char *t)
 
 static client_attr_t *parse_attribute_id(const char *arg)
 {
+    static client_attr_t sEdgeAttr;
+
     if (is_digits(arg)) {
         int attr = atoi(arg);
 
@@ -221,7 +224,30 @@ static client_attr_t *parse_attribute_id(const char *arg)
                 return &sAttrs[i];
             }
         }
+        /* check if it's an edge attribute */
+        af_profile_attr_t *a = af_profile_get_attribute_with_id(attr);
+        if (a) {
+            sEdgeAttr.id = attr;   /* we don't need the number anymore */
+            sEdgeAttr.name = NULL; /* we don't need the name anymore */
+            sEdgeAttr.type = a->type;
+            return &sEdgeAttr;
+        }
     } else {
+        // check for edge attributes
+        if (!strncmp(arg, EDGE_ATTR_OWNER_NAME_PREFIX, EDGE_ATTR_OWNER_NAME_PREFIX_LEN) &&
+            is_digits(&arg[EDGE_ATTR_OWNER_NAME_PREFIX_LEN])) {
+            int num = atoi(&arg[EDGE_ATTR_OWNER_NAME_PREFIX_LEN]);
+            if (num) {
+                af_profile_attr_t *a = af_profile_get_attribute_with_id(num);
+                if (a) {
+                    sEdgeAttr.id = num;    /* we don't need the number anymore */
+                    sEdgeAttr.name = NULL; /* we don't need the name anymore */
+                    sEdgeAttr.type = a->type;
+                    return &sEdgeAttr;
+                }
+            }
+        }
+
         // check for the other attributes
         for (int i = 0; i < sizeof(sAttrs) / sizeof(sAttrs[0]); i++) {
             if (!strcmp(sAttrs[i].name, arg)) {
@@ -296,10 +322,17 @@ int main(int argc, char * argv[])
 
     strcpy(sAttrOwner, "IPC.ATTRC");
 
+    int numEdgeAttrs = af_profile_load(NULL);
+
     if (argc > 1) {
         if (!strcmp(argv[1], "list")) {
-            int i;
-            for (i = 0; i < sizeof(sAttrs)/sizeof(sAttrs[0]); i++) {
+            for (int i = 0; i < numEdgeAttrs; i++) {
+                af_profile_attr_t *a = af_profile_get_attribute_at_index(i);
+                if (a && a->attr_id >= AF_ATTR_EDGE_START && a->attr_id <= AF_ATTR_EDGE_END) {
+                    printf("%5d EDGED_%d %s\n", a->attr_id, a->attr_id, vf_get_name_for_type(a->type));
+                }
+            }
+            for (int i = 0; i < sizeof(sAttrs)/sizeof(sAttrs[0]); i++) {
                 printf("%5d %s %s\n", sAttrs[i].id, sAttrs[i].name, vf_get_name_for_type(sAttrs[i].type));
             }
             exit(0);
@@ -352,6 +385,8 @@ int main(int argc, char * argv[])
     if (sSetValue) {
         free(sSetValue);
     }
+
+    af_profile_free();
 
     closelog();
 

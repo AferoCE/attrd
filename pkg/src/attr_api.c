@@ -432,7 +432,7 @@ static void handle_set_reply(uint8_t *rxBuf, int rxSize)
     params[2].type = AF_RPC_TYPE_UINT16;
     int np = af_rpc_get_params_from_buffer(params, ARRAY_SIZE(params), rxBuf, rxSize, AF_RPC_STRICT);
     if (np < 0) {
-        AFLOG_ERR("on_get_reply_rpc:np=%d:can't parse set reply", np);
+        AFLOG_ERR("on_set_reply_rpc:np=%d:can't parse set reply", np);
         return;
     }
     uint8_t status = AF_RPC_GET_UINT8_PARAM(params[1]);
@@ -445,7 +445,7 @@ static void handle_set_reply(uint8_t *rxBuf, int rxSize)
         }
     }
     if (o == NULL) {
-        AFLOG_ERR("on_get_reply_rpc:setId=%d:set ID not found; ignoring", setId);
+        AFLOG_ERR("on_set_reply_rpc:setId=%d:set ID not found; ignoring", setId);
         return;
     }
 
@@ -598,7 +598,7 @@ int af_attr_open (struct event_base *base,
     if (pos < 0) {
         AFLOG_ERR("attr_api_open:af_rpc_create_buffer:pos=%d:", pos);
         af_ipcc_close(sClient->server);
-        status = AF_ATTR_STATUS_BAD_DATA;
+        status = AF_ATTR_STATUS_UNSPECIFIED;
         goto error;
     }
 

@@ -23,6 +23,7 @@
 #include "af_rpc.h"
 #include "af_mempool.h"
 #include "af_ipc_server.h"
+#include "af_profile.h"
 
 #ifdef BUILD_TARGET_DEBUG
 uint32_t g_debugLevel = 3;
@@ -55,7 +56,7 @@ typedef struct attr_struct {
     uint16_t ownerId;
     uint16_t flags;
     uint16_t getTimeout;
-    uint16_t pad;
+    uint16_t maxLength; /* used only for edge attributes */
     attrd_client_t *owner;
     notify_client_t *notify;
     af_attr_type_t type;
@@ -85,29 +86,22 @@ static char sAttrClientNames[][AF_ATTR_OWNER_NAME_SIZE] = {
 };
 #undef _AF_ATTR_OWNERDEF
 
-/* EDGE ATTRIBUTES: */
-/* edge attribues: range 1-1023 */
-#define _MCU_ATTRDEF(attr_id_num,_attr_id_name,_attr_type,_attr_get_timeout,_attr_owner,_attr_flags) \
-    { \
-      .id = attr_id_num, \
-      .ownerId = AF_ATTR_OWNER_##_attr_owner, \
-      .flags = _attr_flags, \
-      .getTimeout = _attr_get_timeout, \
-      .name = #_attr_id_name "_" \
-    }
-
-static attr_t sEdgeAttrs[AF_ATTR_EDGE_END+1] = { [0 ... AF_ATTR_EDGE_END] =
-    _MCU_ATTRDEF(0,  EDGE_ATTR, 0, AF_ATTR_EDGE_GET_TIMEOUT, HUBBY, (AF_ATTR_FLAG_WRITABLE | AF_ATTR_FLAG_NOTIFY))
-};
-
-#undef _MCU_ATTRDEF
-
+static attr_t *sEdgeAttr = NULL;
+static int sNumEdgeAttrs = 0;
+static int sNumProfileAttrs = 0;
 
 static struct event_base *sEventBase = NULL;
 static trans_context_t *sReadTrans = NULL;
 static op_context_t *sOutstandingGets = NULL;
 static op_context_t *sOutstandingSets = NULL;
 static struct event *sPipeEvent = NULL;
+
+#define ASR_STATE_UNKNOWN       0xFF
+#define ASR_STATE_REBOOTED      0x00
+#define ASR_STATE_INITIALIZED   0x04
+#define ASR_STATE_LINKED        0x01
+
+static uint8_t sAsrState = ASR_STATE_UNKNOWN;
 
 #if 0
 static void dump_attrd_state(void)
@@ -126,7 +120,7 @@ static void dump_attrd_state(void)
     AFLOG_DEBUG3("dump_attrd_state:Clients");
     attrd_client_t *c;
     for (c = sClients; c; c = c->next) {
-        AFLOG_DEBUG3("  name=%s", sAttrClientNames[c->ownerId]);
+        AFLOG_DEBUG3("  p=%p,name=%s", c, sAttrClientNames[c->ownerId]);
     }
 }
 #endif
@@ -141,6 +135,64 @@ static attrd_client_t *client_find_by_owner_id(uint16_t ownerId)
     }
     return NULL;
 }
+
+static void load_mcu_attributes()
+{
+    sNumProfileAttrs = af_profile_load(NULL);
+    if (sNumProfileAttrs < 0) {
+        AFLOG_ERR("%s_load:errno=%d", __func__, errno);
+        return;
+    }
+
+    if (sEdgeAttr) {
+        free(sEdgeAttr);
+        sEdgeAttr = NULL;
+        sNumEdgeAttrs = 0;
+    }
+
+    /* count the number of edge attributes */
+    int na = 0;
+    for (int i = 0; i < sNumProfileAttrs; i++) {
+        af_profile_attr_t *a = af_profile_get_attribute_at_index(i);
+        if (a && a->attr_id >= AF_ATTR_EDGE_START && a->attr_id <= AF_ATTR_EDGE_END) {
+            na++;
+        }
+    }
+
+    /* get edged client pointer (or NULL if edged not connected yet */
+    attrd_client_t *client = client_find_by_owner_id(AF_ATTR_OWNER_EDGED);
+
+    /* allocate space for new attributes */
+    sEdgeAttr = calloc(na, sizeof(attr_t));
+    if (sEdgeAttr == NULL) {
+        AFLOG_ERR("%s_alloc::can't allocate space for attributes", __func__);
+    } else {
+        sNumEdgeAttrs = na;
+        na = 0;
+
+        /* create the new attributes */
+        for (int i = 0; i < sNumProfileAttrs; i++) {
+            af_profile_attr_t *a = af_profile_get_attribute_at_index(i);
+            if (a && a->attr_id >= AF_ATTR_EDGE_START && a->attr_id <= AF_ATTR_EDGE_END) {
+                attr_t *ea = &sEdgeAttr[na++];
+                ea->id = a->attr_id;
+                ea->ownerId = AF_ATTR_OWNER_EDGED;
+                ea->flags = AF_ATTR_FLAG_NOTIFY;
+                if (a->flags & ATTR_FLAG_WRITE) {
+                    ea->flags |= AF_ATTR_FLAG_WRITABLE;
+                }
+                ea->getTimeout = AF_ATTR_EDGE_GET_TIMEOUT;
+                ea->type = a->type;
+                ea->maxLength = a->max_length;
+                ea->owner = client;
+                sprintf(ea->name, "EDGED_%d", a->attr_id);
+            }
+        }
+    }
+
+    AFLOG_INFO("Loaded %d MCU attributes from profile", sNumEdgeAttrs);
+}
+
 
 // return the ownerId given the client name
 static uint16_t client_find_ownerId_by_name(char *name)
@@ -182,10 +234,15 @@ static void notify_register_owner(attrd_client_t *client, char *name, uint8_t ow
         return;
     }
 
-    // edge attributes
+    // if hubby connects, load edge attributes
     if (owner == AF_ATTR_OWNER_HUBBY) {
-        for (i = AF_ATTR_EDGE_START; i <= AF_ATTR_EDGE_END; i++) {
-            sEdgeAttrs[i].owner = client;
+        load_mcu_attributes();
+    }
+
+    // edge attributes
+    if (owner == AF_ATTR_OWNER_EDGED) {
+        for (i = 0; i < sNumEdgeAttrs; i++) {
+            sEdgeAttr[i].owner = client;
         }
     }
 
@@ -193,6 +250,19 @@ static void notify_register_owner(attrd_client_t *client, char *name, uint8_t ow
         if (sAttr[i].ownerId == owner) {
             sAttr[i].owner = client;
         }
+    }
+}
+
+static void add_client_to_attribute_notification_list(attr_t *a, attrd_client_t *client)
+{
+    notify_client_t *nc = (notify_client_t *)af_mempool_alloc(sNotifyClientPool);
+    if (nc != NULL) {
+        /* add to this attribute's notify list */
+        nc->client = client;
+        nc->next = a->notify;
+        a->notify = nc;
+    } else {
+        AFLOG_ERR("%s_alloc:attrId=%d", __func__, a->id);
     }
 }
 
@@ -208,23 +278,18 @@ static void notify_register_client_with_ranges(attrd_client_t *client, af_attr_r
         return;
     }
 
-    int i;
-    int j;
-    for (i = 0; i < NUM_ATTR; i++) {
+    for (int i = 0; i < NUM_ATTR; i++) {
         uint32_t attrId = sAttr[i].id;
-        for (j = 0; j < numRanges; j++) {
+        for (int j = 0; j < numRanges; j++) {
             if (attrId >= ranges[j].first && attrId <= ranges[j].last) {
                 /* do not allow owner to register for its own notifications */
                 if (sAttr[i].owner != client) {
-                    AFLOG_DEBUG1("notify_register:client=%s,attrId=%d", sAttrClientNames[client->ownerId], attrId);
-                    notify_client_t *nc = (notify_client_t *)af_mempool_alloc(sNotifyClientPool);
-                    if (nc != NULL) {
-                        /* add to this attribute's notify list */
-                        nc->client = client;
-                        nc->next = sAttr[i].notify;
-                        sAttr[i].notify = nc;
+                    /* hide MCU_HIDE attributes from EDGED */
+                    if (!(client->ownerId == AF_ATTR_OWNER_EDGED && (sAttr[i].flags & AF_ATTR_FLAG_MCU_HIDE) != 0)) {
+                        AFLOG_DEBUG1("notify_register:client=%s,attrId=%d", sAttrClientNames[client->ownerId], attrId);
+                        add_client_to_attribute_notification_list(&sAttr[i], client);
                     } else {
-                        AFLOG_ERR("notify_register_client_table_alloc:attrId=%d", attrId);
+                        AFLOG_INFO("mcu_hide_attribute:client=%s,attrId=%d:ignored registration", sAttrClientNames[client->ownerId], attrId);
                     }
                 } else {
                     AFLOG_WARNING("owner_self_notify:owner=%s,attrId=%d:owner registration for notification on its own attribute ignored",
@@ -234,27 +299,13 @@ static void notify_register_client_with_ranges(attrd_client_t *client, af_attr_r
         }
     }
 
-    //edge attributes
-    for (j = 0; j < numRanges; j++) {
-        if ((ranges[j].first >= AF_ATTR_EDGE_START) && (ranges[j].first <= AF_ATTR_EDGE_END)) {
-            AFLOG_DEBUG1("notify_register_client_with_ranges:range[%d].first=%d, last=%d", j, ranges[j].first, ranges[j].last);
-
-            if (sEdgeAttrs[ranges[j].first].owner != client) {
-                int limit = (AF_ATTR_EDGE_END < ranges[j].last ? AF_ATTR_EDGE_END : ranges[j].last);
-                for (i = ranges[j].first; i <= limit; i++) {
-                    notify_client_t *nc = (notify_client_t *)af_mempool_alloc(sNotifyClientPool);
-                    if (nc != NULL) {
-                        nc->client = client;
-                        nc->next = sEdgeAttrs[i].notify;
-                        sEdgeAttrs[i].notify = nc;
-                    } else {
-                        AFLOG_ERR("notify_register_client_table_alloc:attrId=%d", i);
-                    }
-                }
-            } else {
-                AFLOG_WARNING("owner_self_notify:owner=%s,attrId=%d:owner registration for notification on its own attribute ignored",
-                               sAttrClientNames[client->ownerId], i);
-            }
+    /* edge attributes notifications are automatically sent to hubby and scripts
+     * but no one else in order to allow profile changes without restarting attrd.
+     */
+    if (client->ownerId == AF_ATTR_OWNER_HUBBY) {
+        for (int i = 0; i < sNumEdgeAttrs; i++) {
+            AFLOG_DEBUG1("notify_edge_register:client=HUBBY,attrId=%d", sEdgeAttr[i].id);
+            add_client_to_attribute_notification_list(&sEdgeAttr[i], client);
         }
     }
 }
@@ -291,20 +342,25 @@ static void notify_unregister_client(attrd_client_t *client)
         return;
     }
 
-    int i;
-    for (i = 0; i < NUM_ATTR; i++) {
+    for (int i = 0; i < NUM_ATTR; i++) {
         if (sAttr[i].owner == client) {
             sAttr[i].owner = NULL;
         }
         remove_notify_client(&sAttr[i].notify, client);
     }
 
-    // edge attributes
-    for (i = AF_ATTR_EDGE_START; i <= AF_ATTR_EDGE_END; i++) {
-        if (client->ownerId == AF_ATTR_OWNER_HUBBY) {
-            sEdgeAttrs[i].owner = NULL;
+    /* Unregister edge attribute notifications when hubby is being unregistered
+     * The edge attributes will be freed when hubby registers as part of the profile
+     * load process
+     */
+    if (client->ownerId == AF_ATTR_OWNER_HUBBY) {
+        for (int i = 0; i < sNumEdgeAttrs; i++) {
+            remove_notify_client(&sEdgeAttr[i].notify, client);
         }
-        remove_notify_client(&sEdgeAttrs[i].notify, client);
+        /* set the ASR state to unknown so we don't send ASR state notifications until hubby
+         * reconnects and sends its ASR state notifications
+         */
+        sAsrState = ASR_STATE_UNKNOWN;
     }
 }
 
@@ -315,9 +371,12 @@ static void notify_unregister_client(attrd_client_t *client)
 static attr_t *notify_find_attribute_with_id(uint32_t attrId)
 {
     if ((attrId >= AF_ATTR_EDGE_START) && (attrId <= AF_ATTR_EDGE_END)) {
-        return &sEdgeAttrs[attrId];
-    }
-    else {
+        for (int i = 0; i < sNumEdgeAttrs; i++) {
+            if (sEdgeAttr[i].id == attrId) {
+                return &sEdgeAttr[i];
+            }
+        }
+    } else {
         for (int i = 0; i < NUM_ATTR; i++) {
             if (sAttr[i].id == attrId) {
                 return &sAttr[i];
@@ -352,8 +411,35 @@ static int send_request(uint16_t clientId, uint8_t *buf, int bufSize, af_ipc_rec
     return af_ipcs_send_request(sServer, clientId, buf, bufSize, receive, context, timeoutMs);
 }
 
+static int notify_client_of_attribute(attr_value_t *aValue, attrd_client_t *client, const char *hexBuf)
+{
+    trans_context_t *t = trans_pool_alloc();
+    if (t == NULL) {
+        AFLOG_ERR("notify_clients_of_attribute_alloc:id=%d:too many transactions", aValue->attrId);
+        return AF_ATTR_STATUS_NO_SPACE; /* don't try to send any more */
+    }
+
+    /* add a reference to the attribute value */
+    t->attrValue = aValue;
+    attr_value_inc_ref_count(aValue);
+
+    AFLOG_DEBUG1("notify_others:attrId=%d,client=%s,%s",
+                 aValue->attrId, sAttrClientNames[client->ownerId], hexBuf);
+
+    /* set the new opcode and data */
+    t->opcode = AF_ATTR_OP_NOTIFY;
+    t->pos = 0;
+
+    int status = trans_transmit(client->clientId, t, send_request, cleanup_notification, t);
+    if (status != AF_ATTR_STATUS_OK) {
+        AFLOG_ERR("notify_clients_of_attribute_status:id=%d,clientName=%s,status=%d:failed to transmit",
+                  aValue->attrId, sAttrClientNames[client->ownerId], status);
+    }
+    return status;
+}
+
 /* This function notifies all interested clients of a new attribute value. It is called
- * from one of two places:
+ * from one of three places:
  *
  *    handle_set_request: The client that owns an attribute has set that attribute
  *    handle_set_reply:   A client that doesn't own an attribute has set that attribute,
@@ -364,42 +450,58 @@ static int send_request(uint16_t clientId, uint8_t *buf, int bufSize, af_ipc_rec
  */
 static void notify_clients_of_attribute(attr_value_t *aValue, attr_t *a)
 {
-    int i;
     char hexBuf[80];
     if (g_debugLevel >= 1) {
         af_util_convert_data_to_hex_with_name("value", aValue->value, aValue->size, hexBuf, sizeof(hexBuf));
     }
 
-    int numClients = 0;
-    notify_client_t *nc;
-    for (nc = a->notify; nc; nc = nc->next) {
-        attrd_client_t *client = nc->client;
-        numClients++;
-        trans_context_t *t = trans_pool_alloc();
-        if (t == NULL) {
-            AFLOG_ERR("notify_clients_of_attribute_alloc:id=%d,numClients=%d:too many transactions", a->id, numClients);
-            return; /* don't try to send any more */
-        }
+    for (notify_client_t *nc = a->notify; nc; nc = nc->next) {
+        notify_client_of_attribute(aValue, nc->client, hexBuf);
+    }
 
-        /* add a reference to the attribute value */
-        t->attrValue = aValue;
-        attr_value_inc_ref_count(aValue);
+    /* allow the script handler to handle notify */
+    script_notify(aValue, a->type);
 
-        AFLOG_DEBUG1("notify_others:attrId=%d,client=%s,%s",
-                     aValue->attrId, sAttrClientNames[client->ownerId], hexBuf);
+    /* if this is an ASR state notification capture it */
+    if (aValue->attrId == AF_ATTR_HUBBY_ASR_STATE) {
+        sAsrState = aValue->value[0];
+    }
+}
 
-        /* set the new opcode and data */
-        t->opcode = AF_ATTR_OP_NOTIFY;
-        t->pos = 0;
-
-        int status = trans_transmit(client->clientId, t, send_request, cleanup_notification, t);
-        if (status != AF_ATTR_STATUS_OK) {
-            AFLOG_ERR("notify_clients_of_attribute_status:id=%d,numClients=%d,i=%d,clientName=%s,status=%d:failed to transmit",
-                      a->id, numClients, i, sAttrClientNames[client->ownerId], status);
+#if 0
+/* This function can be used for attrd attributes in case the daemon wants to notify others
+ * of an internal attribute change.
+ */
+static void send_notification_with_id(uint32_t attrId, uint8_t *value, int size)
+{
+    for (int i = 0; i < NUM_ATTR; i++) {
+        if (sAttr[i].id == attrId) {
+            attr_value_t *av = attr_value_create(attrId, size);
+            if (av) {
+                memcpy(value, av->value, size);
+                notify_clients_of_attribute(av, &sAttr[i]);
+                /* we're done with the value, decrement the ref count */
+                attr_value_dec_ref_count(av);
+            }
+            break;
         }
     }
-    /* allow the script handler to handle notify */
-    script_notify(aValue);
+}
+#endif
+
+static void send_notification_to_client_with_id(attrd_client_t *client, uint32_t attrId, uint8_t *value, int size)
+{
+    char hexBuf[80];
+    if (g_debugLevel >= 1) {
+        af_util_convert_data_to_hex_with_name("value", value, size, hexBuf, sizeof(hexBuf));
+    }
+
+    attr_value_t *av = attr_value_create(attrId, size);
+    if (av) {
+        memcpy(av->value, value, size);
+        notify_client_of_attribute(av, client, hexBuf);
+        attr_value_dec_ref_count(av);
+    }
 }
 
 /* This callback is used to send a response for the IPC server. The IPC server and IPC
@@ -503,7 +605,7 @@ static void handle_set_reply(uint8_t *rxBuf, int rxBufSize, int pos)
 /* This function is called when the attribute daemon receives a set transaction from a
  * client for an attribute the client does not own. The function sends a new transaction
  * to the owner of the attribute containing the new value for the attribute. Because the
- * opcode is AF_ATTR_OP_SET, the client will send a special set response packet in
+ * opcode is AF_ATTR_OP_SET, the owner will send a special set response packet in
  * addition to sending the status of the transaction itself.
  */
 static void notify_owner_of_attribute(uint16_t opId, attr_value_t *aValue, attrd_client_t *owner)
@@ -584,11 +686,23 @@ static void handle_set_request(trans_context_t *t, attrd_client_t *c)
 {
     int status = AF_ATTR_STATUS_OK;
 
-    /* check if this is a valid attribute */
+    /* check if this is a valid attribute and check size if it's an edge attribute */
+    uint32_t id = t->attrValue->attrId;
     attr_t *a = notify_find_attribute_with_id(t->attrValue->attrId);
     if (a == NULL) {
-        AFLOG_ERR("handle_set_request_no_attr:attrId=%d:", t->attrValue->attrId);
+        AFLOG_ERR("%s_no_attr:attrId=%d:", __func__, t->attrValue->attrId);
         status = AF_ATTR_STATUS_ATTR_ID_NOT_FOUND;
+        goto exit;
+    }
+
+    AFLOG_DEBUG2("%s_owner:client=%s,a->owner=%s,a->owner=%p,c=%p", __func__,
+        sAttrClientNames[c->ownerId],
+        a ? sAttrClientNames[a->ownerId] : "NULL",
+        a->owner, c);
+
+    if (id >= AF_ATTR_EDGE_START && id <= AF_ATTR_EDGE_END && t->attrValue->size > a->maxLength) {
+        AFLOG_ERR("%s_edge_length:attrId=%d,len=%d,max_len=%d:", __func__, t->attrValue->attrId, t->attrValue->size, a->maxLength);
+        status = AF_ATTR_STATUS_BAD_DATA; /* NOTE this error is overloaded but shouldn't make it to the client in other cases */
         goto exit;
     }
 
@@ -621,7 +735,7 @@ static void handle_set_request(trans_context_t *t, attrd_client_t *c)
         }
     } else if (a->owner == NULL) {
         /* no owner is available so see if a script will handle the attribute */
-        if (script_owner_set(c->clientId, t->opId, t->attrValue, (void *)a) == 0) {
+        if (script_owner_set(c->clientId, t->opId, t->attrValue, a->type, (void *)a) == 0) {
             if (g_debugLevel >= 1) {
                 char hexBuf[80];
                 af_util_convert_data_to_hex_with_name("value", t->attrValue->value, t->attrValue->size, hexBuf, sizeof(hexBuf));
@@ -694,7 +808,7 @@ static void handle_set_request(trans_context_t *t, attrd_client_t *c)
 
         } else {
             AFLOG_ERR("handle_set_request_not_writable:attrId=%d:", a->id);
-            status = AF_ATTR_STATUS_NOT_WRITABLE;
+            status = AF_ATTR_STATUS_FORBIDDEN;
         }
     }
 
@@ -743,7 +857,6 @@ void send_attrd_set_response(uint8_t status, uint16_t clientId, uint16_t setId, 
     /* we're done with the value */
     attr_value_dec_ref_count(value);
 }
-
 
 /* This function is called when a transaction packet is received with the opcode set to
  * AF_ATTR_OP_SET. It receives the transaction packet. If it's the last packet, it calls
@@ -1009,6 +1122,14 @@ static void handle_get_request(uint8_t *rxBuf, int rxBufSize, int pos, attrd_cli
         goto error;
     }
 
+    /* don't allow gets from EDGED for attributes that are hidden */
+    if (client->ownerId == AF_ATTR_OWNER_EDGED && (attr->flags && AF_ATTR_FLAG_MCU_HIDE)) {
+        /* MCU is trying to get a hidden attribute */
+        AFLOG_ERR("%s_edged_mcu_hide:attrId=%d:edged request for MCU attribute denied", __func__, attrId);
+        status = AF_ATTR_STATUS_FORBIDDEN;
+        goto error;
+    }
+
     AFLOG_DEBUG1("client_get_request:attrId=%d,name=%s,owner=%s:client requested get; forwarding to owner",
                  attrId, attr->name, sAttrClientNames[attr->ownerId]);
 
@@ -1021,7 +1142,7 @@ static void handle_get_request(uint8_t *rxBuf, int rxBufSize, int pos, attrd_cli
     /* check if the owner is available */
     if (attr->owner == NULL) {
         /* owner is not available; try to see if there's a script to handle it */
-        if (script_get(attrId, seqNum, getId) == 0) {
+        if (script_get(attrId, seqNum, getId, attr->type) == 0) {
             /* don't do anything until the script finishes */
             return;
         } else {
@@ -1174,6 +1295,48 @@ exit:
     }
 }
 
+static void send_defaults_to_client(attrd_client_t *client)
+{
+    if (client->ownerId == AF_ATTR_OWNER_EDGED) {
+        for (int i = 0; i < sNumEdgeAttrs; i++) {
+            af_profile_attr_t *a = af_profile_get_attribute_with_id(sEdgeAttr[i].id);
+            if (a) {
+                if ((a->flags & ATTR_FLAG_HAS_DEFAULT) && a->default_length) {
+                    AFLOG_DEBUG1("%s_edge:id=%d,len=%d", __func__, sEdgeAttr[i].id, a->default_length);
+                    send_notification_to_client_with_id(client, sEdgeAttr[i].id, a->default_data, a->default_length);
+                }
+            } else {
+                AFLOG_ERR("%s_attr_not_in_profile:attr_id=%d", __func__, sEdgeAttr[i].id);
+            }
+        }
+    } else {
+        for (int i = 0; i < NUM_ATTR; i++) {
+            if (sAttr[i].owner == client) {
+                af_profile_attr_t *a = af_profile_get_attribute_with_id(sAttr[i].id);
+                if (a) {
+                    if ((a->flags & ATTR_FLAG_HAS_DEFAULT) && a->default_length) {
+                        AFLOG_DEBUG1("%s:id=%d,len=%d", __func__, sAttr[i].id, a->default_length);
+                        send_notification_to_client_with_id(client, sAttr[i].id, a->default_data, a->default_length);
+                    }
+                } else {
+                   AFLOG_DEBUG1("%s_attr_not_in_profile:attr_id=%d", __func__, sAttr[i].id);
+                }
+            }
+        }
+    }
+}
+
+static void send_edged_asr_state(attrd_client_t *client)
+{
+    if (sAsrState != ASR_STATE_UNKNOWN) {
+        if (sAsrState == ASR_STATE_LINKED) {
+            uint8_t initialized = ASR_STATE_INITIALIZED;
+            send_notification_to_client_with_id(client, AF_ATTR_HUBBY_ASR_STATE, &initialized, sizeof(initialized));
+        }
+        send_notification_to_client_with_id(client, AF_ATTR_HUBBY_ASR_STATE, &sAsrState, sizeof(sAsrState));
+    }
+}
+
 static void handle_open_request(uint8_t *rxBuf, int rxBufSize, int pos, attrd_client_t *client, uint32_t seqNum)
 {
     if (client == NULL || rxBuf == NULL || rxBufSize < 0) {
@@ -1240,6 +1403,24 @@ static void handle_open_request(uint8_t *rxBuf, int rxBufSize, int pos, attrd_cl
 
     client->opened = 1;
     client->clientId = af_ipc_get_client_id_from_seq_num(seqNum);
+
+    /* send defaults */
+    AFLOG_DEBUG1("sending_defaults_to_client:client=%s", sAttrClientNames[client->ownerId]);
+    send_defaults_to_client(client);
+
+    if (client->ownerId == AF_ATTR_OWNER_EDGED) {
+        send_edged_asr_state(client);
+    }
+
+    /* if this is hubby connecting, reinitialize edged if it's around */
+    if (client->ownerId == AF_ATTR_OWNER_HUBBY) {
+        attrd_client_t *clientEdged = client_find_by_owner_id(AF_ATTR_OWNER_EDGED);
+        if (clientEdged) {
+            send_defaults_to_client(clientEdged);
+        }
+    }
+
+    AFLOG_DEBUG1("client_opened:owner=%s", sAttrClientNames[client->ownerId]);
 
     status = AF_ATTR_STATUS_OK;
 
@@ -1336,6 +1517,8 @@ static void client_close_callback(int status, uint16_t clientId, void *clientCon
 {
     if (clientContext) {
         attrd_client_t *c = (attrd_client_t *)clientContext;
+        af_attribute_owner_t ownerId = c->ownerId;
+
         /* clear client from attribute notify table */
         notify_unregister_client(c);
 
@@ -1351,7 +1534,9 @@ static void client_close_callback(int status, uint16_t clientId, void *clientCon
                 }
                 /* free memory associated with the client */
                 af_mempool_free(c);
-                AFLOG_DEBUG3("attrd_close_client_found:client=%p",c);
+
+                /* client offline */
+                AFLOG_DEBUG1("client_closed:owner=%s", sAttrClientNames[ownerId]);
                 return;
             }
             last = rc;
@@ -1431,16 +1616,6 @@ int main(int argc, char *argv[])
         goto exit;
     }
 
-    /* edge attr db - set the id */
-    for (int i=AF_ATTR_EDGE_START; i<=AF_ATTR_EDGE_END; i++) {
-        char buf[10];
-        sEdgeAttrs[i].id = i;
-        sprintf(buf, "%d", i);
-        strcat(sEdgeAttrs[i].name, buf);
-        sEdgeAttrs[i].notify = NULL;
-        sEdgeAttrs[i].owner = NULL;
-    }
-
     /* clear out notify clients */
     int i;
     for (i = 0; i < NUM_ATTR; i++) {
@@ -1449,6 +1624,9 @@ int main(int argc, char *argv[])
     }
 
     sClients = NULL;
+
+    /* NOTE: We may immediately reload the attributes when hubby connects. It's not efficient, but it works */
+    load_mcu_attributes();
 
     sServer = af_ipcs_open(sEventBase, "IPC.ATTRD",
                            accept_callback, NULL,
@@ -1477,6 +1655,14 @@ exit:
     if (sServer != NULL) {
         af_ipcs_close(sServer);
         sServer = NULL;
+    }
+
+    /* We should free all notifications but we don't need to because presumably no client has connected yet */
+
+    if (sEdgeAttr) {
+        sNumEdgeAttrs = 0;
+        free(sEdgeAttr);
+        sEdgeAttr = NULL;
     }
 
     /* these functions are idempotent */

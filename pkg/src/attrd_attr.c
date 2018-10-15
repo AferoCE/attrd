@@ -113,6 +113,7 @@ void handle_attrd_get_request(uint32_t seqNum, uint16_t getId, uint32_t attrId)
             AFLOG_INFO("attrd_report_rssi_changes_get:reportChanges=%d", sReportRssiChanges);
             send_attrd_get_response(AF_ATTR_STATUS_OK, seqNum, getId, (uint8_t *)&sReportRssiChanges, sizeof(sReportRssiChanges));
             break;
+
         case AF_ATTR_ATTRD_SYSTEM_TIME :
         {
             struct timeval tv;

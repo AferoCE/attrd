@@ -18,12 +18,12 @@ int script_parse_config(struct event_base *base);
 void script_init(void);
 
 /* called when a notification occurs in case a script wants to handle the notification */
-void script_notify(attr_value_t *v);
+void script_notify(attr_value_t *v, af_attr_type_t aType);
 
 /* called when the owner of an attribute that is being set is unavailable */
-int script_owner_set(uint16_t clientId, uint16_t setId, attr_value_t *v, void *a);
+int script_owner_set(uint16_t clientId, uint16_t setId, attr_value_t *v, af_attr_type_t aType, void *a);
 
 /* called when there is an attribute get request and the owner of said attribute is not available */
-int script_get(uint32_t attrId, uint32_t seqNum, uint16_t getId);
+int script_get(uint32_t attrId, uint32_t seqNum, uint16_t getId, af_attr_type_t aType);
 
 #endif // __ATTR_SCRIPT_H__
