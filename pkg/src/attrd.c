@@ -1406,10 +1406,15 @@ static void handle_open_request(uint8_t *rxBuf, int rxBufSize, int pos, attrd_cl
 
     /* send defaults */
     AFLOG_DEBUG1("sending_defaults_to_client:client=%s", sAttrClientNames[client->ownerId]);
-    send_defaults_to_client(client);
 
     if (client->ownerId == AF_ATTR_OWNER_EDGED) {
+        /* only send defaults to edged if hubby is already connected; otherwise defaults will be sent when hubby connects */
+        if (client_find_by_owner_id(AF_ATTR_OWNER_HUBBY)) {
+            send_defaults_to_client(client);
+        }
         send_edged_asr_state(client);
+    } else {
+        send_defaults_to_client(client);
     }
 
     /* if this is hubby connecting, reinitialize edged if it's around */
