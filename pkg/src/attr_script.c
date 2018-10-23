@@ -803,3 +803,29 @@ int script_get(uint32_t attrId, uint32_t seqNum, uint16_t getId, af_attr_type_t 
     }
 }
 
+void script_dump(void)
+{
+    AFLOG_DEBUG3("SCRIPT_DUMP");
+    for (script_entry_t *s = s_scripts; s; s = s->next) {
+        char *typeName = "unknown";
+        switch(s->type) {
+            case ENTRY_TYPE_INIT :
+                typeName = "init";
+                break;
+            case ENTRY_TYPE_SET :
+                typeName = "set";
+                break;
+            case ENTRY_TYPE_GET :
+                typeName = "get";
+                break;
+            case ENTRY_TYPE_NOTIFY :
+                typeName = "notify";
+                break;
+            default :
+                break;
+        }
+        AFLOG_DEBUG3("  type=%s,attrId=%d,path=%s", typeName, s->attrId, s->path);
+    }
+    AFLOG_DEBUG3("END_OF_SCRIPTS");
+}
+

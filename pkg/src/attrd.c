@@ -103,27 +103,35 @@ static struct event *sPipeEvent = NULL;
 
 static uint8_t sAsrState = ASR_STATE_UNKNOWN;
 
-#if 0
-static void dump_attrd_state(void)
+void dump_attrd_state(void)
 {
-    AFLOG_DEBUG3("dump_attrd_state:Attributes");
-    int i;
-    for (i = 0; i < NUM_ATTR; i++) {
-        AFLOG_DEBUG3("  attrId=%d owner=%s name=%s", sAttr[i].id, sAttrClientNames[sAttr[i].ownerId], sAttr[i].name);
-        if (sAttr[i].notify) {
-            notify_client_t *n;
-            for (n = sAttr[i].notify; n; n = n->next) {
+    AFLOG_DEBUG3("%s:EdgeAttributes", __func__);
+    for (int i = 0; i < sNumEdgeAttrs; i++) {
+        AFLOG_DEBUG3("  attrId=%d owner=%s name=%s flags=0x%02x",
+            sEdgeAttr[i].id, sAttrClientNames[sEdgeAttr[i].ownerId], sEdgeAttr[i].name, sEdgeAttr[i].flags);
+        if (sEdgeAttr[i].notify) {
+            for (notify_client_t *n = sEdgeAttr[i].notify; n; n = n->next) {
                 AFLOG_DEBUG3("    notify=%s", sAttrClientNames[n->client->ownerId]);
             }
         }
     }
-    AFLOG_DEBUG3("dump_attrd_state:Clients");
-    attrd_client_t *c;
-    for (c = sClients; c; c = c->next) {
+
+    AFLOG_DEBUG3("%s:Attributes", __func__);
+    for (int i = 0; i < NUM_ATTR; i++) {
+        AFLOG_DEBUG3("  attrId=%d owner=%s name=%s flags=0x%02x",
+            sAttr[i].id, sAttrClientNames[sAttr[i].ownerId], sAttr[i].name, sAttr[i].flags);
+        if (sAttr[i].notify) {
+            for (notify_client_t *n = sAttr[i].notify; n; n = n->next) {
+                AFLOG_DEBUG3("    notify=%s", sAttrClientNames[n->client->ownerId]);
+            }
+        }
+    }
+    AFLOG_DEBUG3("%s:Clients", __func__);
+    for (attrd_client_t *c = sClients; c; c = c->next) {
         AFLOG_DEBUG3("  p=%p,name=%s", c, sAttrClientNames[c->ownerId]);
     }
+    AFLOG_DEBUG3("%s:Done", __func__);
 }
-#endif
 
 static attrd_client_t *client_find_by_owner_id(uint16_t ownerId)
 {

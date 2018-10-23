@@ -15,6 +15,7 @@
 #include "af_log.h"
 #include "af_attr_client.h"
 #include "attrd_attr.h"
+#include "attr_script.h"
 #include "build_info.h"
 
 static int8_t sReportRssiChanges = 0;
@@ -32,6 +33,11 @@ int handle_attrd_set_request(uint32_t attrId, uint8_t *data, int size)
             }
             g_debugLevel = level;
             AFLOG_INFO("attrd_debug_level_set:level=%d", level);
+            /* dump the state if you set the debug level high enough */
+            if (level >= 3) {
+                dump_attrd_state();
+                script_dump();
+            }
             retVal = AF_ATTR_STATUS_OK;
             break;
         }
