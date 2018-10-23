@@ -88,7 +88,6 @@ static char sAttrClientNames[][AF_ATTR_OWNER_NAME_SIZE] = {
 
 static attr_t *sEdgeAttr = NULL;
 static int sNumEdgeAttrs = 0;
-static int sNumProfileAttrs = 0;
 
 static struct event_base *sEventBase = NULL;
 static trans_context_t *sReadTrans = NULL;
@@ -146,9 +145,13 @@ static attrd_client_t *client_find_by_owner_id(uint16_t ownerId)
 
 static void load_mcu_attributes()
 {
-    sNumProfileAttrs = af_profile_load(NULL);
-    if (sNumProfileAttrs < 0) {
+    int numAttrs = af_profile_load(NULL);
+    if (numAttrs < 0) {
         AFLOG_ERR("%s_load:errno=%d", __func__, errno);
+        return;
+    }
+    if (numAttrs == 0) {
+        AFLOG_INFO("%s_unchanged::profile was unchanged; do not reload attributes", __func__);
         return;
     }
 
@@ -160,7 +163,7 @@ static void load_mcu_attributes()
 
     /* count the number of edge attributes */
     int na = 0;
-    for (int i = 0; i < sNumProfileAttrs; i++) {
+    for (int i = 0; i < numAttrs; i++) {
         af_profile_attr_t *a = af_profile_get_attribute_at_index(i);
         if (a && a->attr_id >= AF_ATTR_EDGE_START && a->attr_id <= AF_ATTR_EDGE_END) {
             na++;
@@ -179,7 +182,7 @@ static void load_mcu_attributes()
         na = 0;
 
         /* create the new attributes */
-        for (int i = 0; i < sNumProfileAttrs; i++) {
+        for (int i = 0; i < numAttrs; i++) {
             af_profile_attr_t *a = af_profile_get_attribute_at_index(i);
             if (a && a->attr_id >= AF_ATTR_EDGE_START && a->attr_id <= AF_ATTR_EDGE_END) {
                 attr_t *ea = &sEdgeAttr[na++];

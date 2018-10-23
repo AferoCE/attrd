@@ -12,6 +12,7 @@
 #include <string.h>
 #include "af_profile.h"
 #include "af_log.h"
+#include "af_util.h"
 
 #define DEFAULT_PROFILE_FILENAME "/etc/hub.profile"
 
@@ -127,12 +128,64 @@ void af_profile_free(void) {
         sProfile = NULL;
     }
 }
+
+static uint8_t sProfileVersion[] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+#define PROFILE_VERSION_OFFSET 202
+
+static int is_new_version(const char *path)
+{
+    int fd = open(path ? path : DEFAULT_PROFILE_FILENAME, O_RDONLY);
+    if (fd < 0) {
+        AFLOG_ERR("%s_open:errno=%d", __func__, errno);
+        goto err;
+    }
+    if (lseek(fd, PROFILE_VERSION_OFFSET, SEEK_SET) < 0) {
+        AFLOG_ERR("%s_lseek:errno=%d", __func__, errno);
+        goto err;
+    }
+    uint8_t currentVersion[8];
+    if (read(fd, currentVersion, sizeof(currentVersion)) != sizeof(currentVersion)) {
+        AFLOG_ERR("%s_read:errno=%d", __func__, errno);
+        goto err;
+    }
+    int ret = memcmp(currentVersion, sProfileVersion, sizeof(currentVersion)) != 0;
+    if (ret) {
+        memcpy(sProfileVersion, currentVersion, sizeof(currentVersion));
+    }
+    return ret;
+
+err:
+    /* we're going to clear the profile version to guarantee that we can load it next time */
+    memset(sProfileVersion, 0, sizeof(sProfileVersion));
+    return -1;
+}
+
 /*
  * parse a binary profile from a file, and fill in a compact table of the
  * attributes, their ids, and types.
  */
+
 int af_profile_load(const char *path)
 {
+    int isNew = is_new_version(path);
+    if (isNew < 0) {
+        AFLOG_INFO("%s_version_error::ignoring profile until the next time hubby starts", __func__);
+        return -1;
+    }
+
+    uint64_t version = 0;
+    for (int i = 0; i < sizeof(sProfileVersion); i++) {
+        version <<= 8;
+        version |= (uint64_t)sProfileVersion[sizeof(sProfileVersion) - i - 1];
+    }
+
+    if (!isNew) {
+        AFLOG_INFO("%s_version_same:version=%llu:already have latest profile", __func__, version);
+        return 0;
+    } else {
+        AFLOG_INFO("%s_version_different:newVersion=%llu:loading new profile", __func__, version);
+    }
+
     af_profile_free();
 
     sProfile = calloc(1, sizeof(af_profile_t));

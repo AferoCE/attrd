@@ -40,7 +40,11 @@ enum af_profile_attr_flag {
 };
 
 /* Loads a profile with the profile at the specified path or the default path (if the specified
- * path is NULL). Returns the number of attributes in it or -1 if there's an error
+ * path is NULL). Return value:
+ *    -1 if error
+ *     0 if the profile currently in memory matches the one on the filesystem
+ *    >0 if the profile is different and was just reloaded; the return value
+ *       is the number of attributes in the profile
  */
 int af_profile_load(const char *path);
 
