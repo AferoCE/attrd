@@ -21,4 +21,6 @@ int handle_attrd_set_request(uint32_t attrId, uint8_t *data, int size);
 void handle_attrd_get_request(uint32_t seqNum, uint16_t getId, uint32_t attrId);
 
 void dump_attrd_state(void);
+
+uint16_t client_find_ownerId_by_name(const char *name);
 #endif // __ATTRD_ATTR_H__

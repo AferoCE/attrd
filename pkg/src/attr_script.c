@@ -21,13 +21,38 @@
 
 #define ATTR_SCRIPT_FILE_NAME "/etc/af_events.conf"
 
+#define __ETYPES \
+    __ETYPE_DEF(INIT,init,20) \
+    __ETYPE_DEF(NOTIFY,notify,20) \
+    __ETYPE_DEF(SET,set,3) \
+    __ETYPE_DEF(GET,get,3) \
+    __ETYPE_DEF(DEFAULT,default,5) \
+
+
+#define __ETYPE_DEF(_x,_y,_z) ENTRY_TYPE_##_x,
 
 typedef enum {
-    ENTRY_TYPE_INIT = 0,
-    ENTRY_TYPE_NOTIFY,
-    ENTRY_TYPE_SET,
-    ENTRY_TYPE_GET
+    __ETYPES
+    NUM_ENTRY_TYPES
 } entry_type_t;
+
+#undef __ETYPE_DEF
+
+#define __ETYPE_DEF(_x,_y,_z) #_y,
+
+static char *s_entryNames[] = {
+    __ETYPES
+};
+
+#undef __ETYPE_DEF
+
+#define __ETYPE_DEF(_x,_y,_z) _z,
+
+static int s_scriptTimeoutsSec[] = {
+    __ETYPES
+};
+
+#undef __ETYPE_DEF
 
 typedef struct script_entry_struct {
     struct script_entry_struct *next;
@@ -48,12 +73,6 @@ static path_entry_t *s_paths = NULL;
 static af_mempool_t *s_scriptPool = NULL;
 static script_entry_t *s_scripts = NULL;
 
-static int s_scriptTimeoutsSec[] = {
-    20, /* init */
-    20, /* notify */
-    3,  /* set */
-    3   /* get */
-};
 
 typedef struct pid_entry_struct {
     struct pid_entry_struct *next;
@@ -310,80 +329,82 @@ static void handle_sigchld(evutil_socket_t fd, short what, void *arg)
 static void handle_line(int lineno, char **tokens, int nt)
 {
     if (nt < 1) {
-        AFLOG_ERR("handle_line_strtok:line=%d,nt=%d:unable to parse entry", lineno, nt);
+        AFLOG_ERR("%s_strtok:line=%d,nt=%d:unable to parse entry", __func__, lineno, nt);
         return;
     }
 
     char typeToken = tokens[0][0];
-    if (typeToken == 'i' || typeToken == 'n' || typeToken == 's' || typeToken == 'g') {
+    entry_type_t et;
+    for (et = ENTRY_TYPE_INIT; et < NUM_ENTRY_TYPES; et++) {
+        if (typeToken == s_entryNames[et][0]) {
+            break;
+        }
+    }
+    if (et >= NUM_ENTRY_TYPES) {
+        AFLOG_ERR("%s_token:lineNum=%d,token=%s:unknown token; ignored", __func__, lineno, tokens[0]);
+        return;
+    }
 
-        char *path;
-        uint32_t attrId = 0;
+    char *path;
+    uint32_t attrId = 0;
 
-        if (typeToken == 'i') {
-            if (nt == 2) {
-                path = tokens[1];
-            } else {
-                AFLOG_ERR("handle_line_init_nt:line=%d,nt=%d,expected=2:init entry has the incorrect number of parameters", lineno, nt);
+    if (et == ENTRY_TYPE_INIT) {
+        if (nt == 2) {
+            path = tokens[1];
+            if (path[0] != '/') {
+                AFLOG_ERR("%s_init_path:line=%d:path=%s:path must be absolute", __func__, lineno, path);
                 return;
             }
         } else {
-            if (nt == 3) {
-                errno = 0;
-                attrId = strtoul(tokens[1], NULL, 10);
-                if (errno != 0) {
-                    AFLOG_ERR("handle_line_attrId:line=%d,errno=%d:failed to convert attribute ID to uint32_t", lineno, errno);
-                    return;
-                }
-                path = tokens[2];
-                if (path[0] != '/') {
-                    AFLOG_ERR("handle_line_path:line=%d:path=%s:path must be absolute", lineno, path);
-                    return;
-                }
-            } else {
-                AFLOG_ERR("handle_line_other_nt:line=%d,nt=%d,expected=3:entry has the incorrect number of parameters", lineno, nt);
-                return;
-            }
-        }
-
-        char *actualPath = add_path_if_not_found(path);
-        if (actualPath == NULL) {
+            AFLOG_ERR("%s_init_nt:line=%d,nt=%d,expected=2:init entry has the incorrect number of parameters", __func__, lineno, nt);
             return;
         }
-
-        switch (typeToken) {
-            case 'i' :
-                add_script(ENTRY_TYPE_INIT, attrId, actualPath, lineno);
-                AFLOG_DEBUG3("handle_line_add_init:path=%s", actualPath);
-                break;
-            case 'n' :
-                add_script(ENTRY_TYPE_NOTIFY, attrId, actualPath, lineno);
-                AFLOG_DEBUG3("handle_line_add_notify:attrId=%d,path=%s", attrId, actualPath);
-                break;
-            case 's' :
-                if (find_script_with_attr_id_and_type(attrId, ENTRY_TYPE_SET) == NULL) {
-                    add_script(ENTRY_TYPE_SET, attrId, actualPath, lineno);
-                    AFLOG_DEBUG3("handle_line_add_set:attrId=%d,path=%s", attrId, actualPath);
-                } else {
-                    AFLOG_WARNING("handle_line_set_dup:attrId=%d,lineno=%d:set script for this attribute already exists; ignoring", attrId, lineno);
-                }
-                break;
-            case 'g' :
-                if (find_script_with_attr_id_and_type(attrId, ENTRY_TYPE_GET) == NULL) {
-                    add_script(ENTRY_TYPE_GET, attrId, actualPath, lineno);
-                    AFLOG_DEBUG3("handle_line_add_get:attrId=%d,path=%s", attrId, actualPath);
-                } else {
-                    AFLOG_WARNING("handle_line_get_dup:attrId=%d,lineno=%d:get script for this attribute already exists; ignoring", attrId, lineno);
-                }
-                break;
-            default :
-                break;
-        }
-
-    } else if (typeToken == 'o') {
-        AFLOG_DEBUG3("handle_line_ignored:lineNum=%d,token=%s:token not handled by attrd; ignored", lineno, tokens[0]);
     } else {
-        AFLOG_ERR("handle_line_token:lineNum=%d,token=%s:unknown token; ignored", lineno, tokens[0]);
+        if (nt == 3) {
+            errno = 0;
+            attrId = strtoul(tokens[1], NULL, 10);
+            if (errno != 0) {
+                AFLOG_ERR("%s_attrId:line=%d,errno=%d:failed to convert attribute ID to uint32_t", __func__, lineno, errno);
+                return;
+            }
+            path = tokens[2];
+            if (path[0] != '/') {
+                AFLOG_ERR("%s_path:line=%d:path=%s:path must be absolute", __func__, lineno, path);
+                return;
+            }
+        } else {
+            AFLOG_ERR("%s_other_nt:line=%d,nt=%d,expected=3:entry has the incorrect number of parameters", __func__, lineno, nt);
+            return;
+        }
+    }
+
+    char *actualPath = add_path_if_not_found(path);
+    if (actualPath == NULL) {
+        return;
+    }
+
+    switch (et) {
+        case ENTRY_TYPE_INIT :
+            add_script(et, attrId, actualPath, lineno);
+            AFLOG_DEBUG2("%s_add_%s:path=%s", __func__, s_entryNames[et], actualPath);
+            break;
+        case ENTRY_TYPE_DEFAULT :
+        case ENTRY_TYPE_NOTIFY :
+            add_script(et, attrId, actualPath, lineno);
+            AFLOG_DEBUG2("%s_add_%s:attrId=%d,path=%s", __func__, s_entryNames[et], attrId, actualPath);
+            break;
+        case ENTRY_TYPE_SET :
+        case ENTRY_TYPE_GET :
+            if (find_script_with_attr_id_and_type(attrId, et) == NULL) {
+                add_script(et, attrId, actualPath, lineno);
+                AFLOG_DEBUG2("%s_add_%s:attrId=%d,path=%s", __func__, s_entryNames[et], attrId, actualPath);
+            } else {
+                AFLOG_WARNING("%s_%s_dup:attrId=%d,lineno=%d:%s script for this attribute already exists; ignoring",
+                __func__, s_entryNames[et], attrId, lineno, s_entryNames[et]);
+            }
+            break;
+        default :
+            break;
     }
 }
 
@@ -494,15 +515,17 @@ static void script_exec(pid_entry_t *p)
 
     int pipeFds[2];
 
+    argv[1] = s_entryNames[p->script->type];
+
     switch (p->script->type) {
         case ENTRY_TYPE_INIT :
             argv[0] = p->script->path;
-            argv[1] = "init";
             argv[2] = NULL;
             break;
 
         case ENTRY_TYPE_SET :
         case ENTRY_TYPE_NOTIFY :
+        case ENTRY_TYPE_DEFAULT :
             if (p->script->type == ENTRY_TYPE_NOTIFY) {
                 vs = vf_alloc_and_convert_output_value_for_execv(p->format, p->u.notify.v->value, p->u.notify.v->size);
                 attr_value_dec_ref_count(p->u.notify.v);
@@ -516,7 +539,6 @@ static void script_exec(pid_entry_t *p)
             }
 
             argv[0] = p->script->path;
-            argv[1] = (p->script->type == ENTRY_TYPE_NOTIFY ? "notify" : "set");
             argv[2] = attrNumBuf;
             argv[3] = vs;
             argv[4] = NULL;
@@ -529,7 +551,6 @@ static void script_exec(pid_entry_t *p)
             }
 
             argv[0] = p->script->path;
-            argv[1] = "get";
             argv[2] = attrNumBuf;
             argv[3] = NULL;
             break;
@@ -803,28 +824,42 @@ int script_get(uint32_t attrId, uint32_t seqNum, uint16_t getId, af_attr_type_t 
     }
 }
 
+void script_notify_default(uint32_t attrId, af_attr_type_t aType, uint8_t *value, uint16_t size)
+{
+    attr_value_t *av = NULL;
+    for (script_entry_t *e = s_scripts; e; e = e->next) {
+        if (e->type == ENTRY_TYPE_DEFAULT && e->attrId == attrId) {
+            if (!av) {
+                av = attr_value_create_with_value(attrId, value, size);
+                if (!av) {
+                    return;
+                }
+            }
+            pid_entry_t p;
+            memset(&p, 0, sizeof(p));
+
+            p.script = e;
+            p.format = aType;
+            /* hold a reference until script finishes */
+            attr_value_inc_ref_count(av);
+            p.u.notify.v = av;
+            script_exec(&p);
+        }
+    }
+    if (av) {
+        attr_value_dec_ref_count(av);
+    }
+}
+
 void script_dump(void)
 {
     AFLOG_DEBUG3("SCRIPT_DUMP");
     for (script_entry_t *s = s_scripts; s; s = s->next) {
-        char *typeName = "unknown";
-        switch(s->type) {
-            case ENTRY_TYPE_INIT :
-                typeName = "init";
-                break;
-            case ENTRY_TYPE_SET :
-                typeName = "set";
-                break;
-            case ENTRY_TYPE_GET :
-                typeName = "get";
-                break;
-            case ENTRY_TYPE_NOTIFY :
-                typeName = "notify";
-                break;
-            default :
-                break;
+        if (s->type == ENTRY_TYPE_INIT) {
+            AFLOG_DEBUG3("  %s:path=%s", s_entryNames[s->type], s->path);
+        } else {
+            AFLOG_DEBUG3("  %s:attrId=%d,path=%s", s_entryNames[s->type], s->attrId, s->path);
         }
-        AFLOG_DEBUG3("  type=%s,attrId=%d,path=%s", typeName, s->attrId, s->path);
     }
     AFLOG_DEBUG3("END_OF_SCRIPTS");
 }

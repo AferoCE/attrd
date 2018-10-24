@@ -28,6 +28,17 @@ attr_value_t *attr_value_create(uint32_t attributeId, uint16_t size)
     return retVal;
 }
 
+attr_value_t *attr_value_create_with_value(uint32_t attributeId, uint8_t *value, uint16_t size)
+{
+    attr_value_t *av = attr_value_create(attributeId, size);
+    if (av) {
+        if (value && size) {
+            memcpy(av->value, value, size);
+        }
+    }
+    return av;
+}
+
 void attr_value_inc_ref_count(attr_value_t *aValue)
 {
     if (aValue != NULL) {
@@ -558,7 +569,7 @@ trans_context_t *trans_alloc (uint32_t attributeId, uint8_t opcode, uint8_t *val
         return NULL;
     }
 
-    a = attr_value_create(attributeId, length);
+    a = attr_value_create_with_value(attributeId, value, length);
     if (a == NULL) {
         AFLOG_ERR("trans_alloc_attr_value:");
         trans_pool_free(t);
@@ -567,9 +578,6 @@ trans_context_t *trans_alloc (uint32_t attributeId, uint8_t opcode, uint8_t *val
 
     t->opcode = opcode;
     t->attrValue = a;
-    if (length) {
-        memcpy(a->value, value, length);
-    }
 
     return t;
 }

@@ -26,6 +26,9 @@ int script_owner_set(uint16_t clientId, uint16_t setId, attr_value_t *v, af_attr
 /* called when there is an attribute get request and the owner of said attribute is not available */
 int script_get(uint32_t attrId, uint32_t seqNum, uint16_t getId, af_attr_type_t aType);
 
+/* called on each attribute with default values after loading the profile */
+void script_notify_default(uint32_t attrId, af_attr_type_t aType, uint8_t *value, uint16_t size);
+
 /* called when changing the debug level to a high level; dumps the script settings */
 void script_dump(void);
 

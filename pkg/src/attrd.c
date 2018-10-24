@@ -143,16 +143,16 @@ static attrd_client_t *client_find_by_owner_id(uint16_t ownerId)
     return NULL;
 }
 
-static void load_mcu_attributes()
+static int load_mcu_attributes()
 {
     int numAttrs = af_profile_load(NULL);
     if (numAttrs < 0) {
         AFLOG_ERR("%s_load:errno=%d", __func__, errno);
-        return;
+        return numAttrs;
     }
     if (numAttrs == 0) {
         AFLOG_INFO("%s_unchanged::profile was unchanged; do not reload attributes", __func__);
-        return;
+        return numAttrs;
     }
 
     if (sEdgeAttr) {
@@ -202,11 +202,12 @@ static void load_mcu_attributes()
     }
 
     AFLOG_INFO("Loaded %d MCU attributes from profile", sNumEdgeAttrs);
+    return numAttrs;
 }
 
 
 // return the ownerId given the client name
-static uint16_t client_find_ownerId_by_name(char *name)
+uint16_t client_find_ownerId_by_name(const char *name)
 {
     int i, owner = AF_ATTR_OWNER_UNKNOWN;
 
@@ -243,11 +244,6 @@ static void notify_register_owner(attrd_client_t *client, char *name, uint8_t ow
     if (owner == 0) {
         AFLOG_WARNING("handle_open_request_owner:name=%s:owner not found", name);
         return;
-    }
-
-    // if hubby connects, load edge attributes
-    if (owner == AF_ATTR_OWNER_HUBBY) {
-        load_mcu_attributes();
     }
 
     // edge attributes
@@ -487,9 +483,8 @@ static void send_notification_with_id(uint32_t attrId, uint8_t *value, int size)
 {
     for (int i = 0; i < NUM_ATTR; i++) {
         if (sAttr[i].id == attrId) {
-            attr_value_t *av = attr_value_create(attrId, size);
+            attr_value_t *av = attr_value_create_with_value(attrId, value, size);
             if (av) {
-                memcpy(value, av->value, size);
                 notify_clients_of_attribute(av, &sAttr[i]);
                 /* we're done with the value, decrement the ref count */
                 attr_value_dec_ref_count(av);
@@ -507,9 +502,8 @@ static void send_notification_to_client_with_id(attrd_client_t *client, uint32_t
         af_util_convert_data_to_hex_with_name("value", value, size, hexBuf, sizeof(hexBuf));
     }
 
-    attr_value_t *av = attr_value_create(attrId, size);
+    attr_value_t *av = attr_value_create_with_value(attrId, value, size);
     if (av) {
-        memcpy(av->value, value, size);
         notify_client_of_attribute(av, client, hexBuf);
         attr_value_dec_ref_count(av);
     }
@@ -705,11 +699,6 @@ static void handle_set_request(trans_context_t *t, attrd_client_t *c)
         status = AF_ATTR_STATUS_ATTR_ID_NOT_FOUND;
         goto exit;
     }
-
-    AFLOG_DEBUG2("%s_owner:client=%s,a->owner=%s,a->owner=%p,c=%p", __func__,
-        sAttrClientNames[c->ownerId],
-        a ? sAttrClientNames[a->ownerId] : "NULL",
-        a->owner, c);
 
     if (id >= AF_ATTR_EDGE_START && id <= AF_ATTR_EDGE_END && t->attrValue->size > a->maxLength) {
         AFLOG_ERR("%s_edge_length:attrId=%d,len=%d,max_len=%d:", __func__, t->attrValue->attrId, t->attrValue->size, a->maxLength);
@@ -1348,6 +1337,18 @@ static void send_edged_asr_state(attrd_client_t *client)
     }
 }
 
+static void send_defaults_to_scripts(int numProfileAttrs)
+{
+    for (int i = 0; i < numProfileAttrs; i++) {
+        af_profile_attr_t *a = af_profile_get_attribute_at_index(i);
+        if (a) {
+            if (a->flags & ATTR_FLAG_HAS_DEFAULT) {
+                script_notify_default(a->attr_id, a->type, a->default_data, a->default_length);
+            }
+        }
+    }
+}
+
 static void handle_open_request(uint8_t *rxBuf, int rxBufSize, int pos, attrd_client_t *client, uint32_t seqNum)
 {
     if (client == NULL || rxBuf == NULL || rxBufSize < 0) {
@@ -1414,6 +1415,14 @@ static void handle_open_request(uint8_t *rxBuf, int rxBufSize, int pos, attrd_cl
 
     client->opened = 1;
     client->clientId = af_ipc_get_client_id_from_seq_num(seqNum);
+
+    /* if hubby connects, load profile if it has changed */
+    if (client->ownerId == AF_ATTR_OWNER_HUBBY) {
+        int numProfileAttrs = load_mcu_attributes();
+        if (numProfileAttrs > 0) {
+            send_defaults_to_scripts(numProfileAttrs);
+        }
+    }
 
     /* send defaults */
     AFLOG_DEBUG1("sending_defaults_to_client:client=%s", sAttrClientNames[client->ownerId]);
@@ -1642,7 +1651,7 @@ int main(int argc, char *argv[])
     sClients = NULL;
 
     /* NOTE: We may immediately reload the attributes when hubby connects. It's not efficient, but it works */
-    load_mcu_attributes();
+    int numProfileAttrs = load_mcu_attributes();
 
     sServer = af_ipcs_open(sEventBase, "IPC.ATTRD",
                            accept_callback, NULL,
@@ -1656,6 +1665,9 @@ int main(int argc, char *argv[])
     script_parse_config(sEventBase);
 
     script_init();
+    if (numProfileAttrs > 0) {
+        send_defaults_to_scripts(numProfileAttrs);
+    }
 
     event_base_dispatch(sEventBase);
 

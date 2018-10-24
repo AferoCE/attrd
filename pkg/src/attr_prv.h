@@ -104,6 +104,7 @@ typedef struct {
     uint8_t *value;
 } attr_value_t;
 attr_value_t *attr_value_create(uint32_t attributeId, uint16_t size);
+attr_value_t *attr_value_create_with_value(uint32_t attributeId, uint8_t *value, uint16_t size);
 void attr_value_inc_ref_count(attr_value_t *aValue);
 void attr_value_dec_ref_count(attr_value_t *aValue);
 
