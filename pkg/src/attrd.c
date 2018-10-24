@@ -305,16 +305,6 @@ static void notify_register_client_with_ranges(attrd_client_t *client, af_attr_r
             }
         }
     }
-
-    /* edge attributes notifications are automatically sent to hubby and scripts
-     * but no one else in order to allow profile changes without restarting attrd.
-     */
-    if (client->ownerId == AF_ATTR_OWNER_HUBBY) {
-        for (int i = 0; i < sNumEdgeAttrs; i++) {
-            AFLOG_DEBUG1("notify_edge_register:client=HUBBY,attrId=%d", sEdgeAttr[i].id);
-            add_client_to_attribute_notification_list(&sEdgeAttr[i], client);
-        }
-    }
 }
 
 static void remove_notify_client(notify_client_t **head, attrd_client_t *client)
@@ -1421,6 +1411,14 @@ static void handle_open_request(uint8_t *rxBuf, int rxBufSize, int pos, attrd_cl
         int numProfileAttrs = load_mcu_attributes();
         if (numProfileAttrs > 0) {
             send_defaults_to_scripts(numProfileAttrs);
+        }
+
+        /* edge attributes notifications are automatically sent to hubby and scripts
+        * but no one else in order to allow profile changes without restarting attrd.
+        */
+        for (int i = 0; i < sNumEdgeAttrs; i++) {
+            AFLOG_DEBUG1("notify_edge_register:client=HUBBY,attrId=%d", sEdgeAttr[i].id);
+            add_client_to_attribute_notification_list(&sEdgeAttr[i], client);
         }
     }
 
