@@ -235,14 +235,14 @@ static void notify_register_owner(attrd_client_t *client, char *name, uint8_t ow
     int i;
 
     if (client == NULL || name == NULL) {
-        AFLOG_ERR("notify_register_owner_param:client_null=%d,name_null=%d:", client == NULL, name == NULL);
+        AFLOG_ERR("%s_param:client_null=%d,name_null=%d:", __func__, client == NULL, name == NULL);
         return;
     }
 
     client->ownerId = owner;
 
     if (owner == 0) {
-        AFLOG_WARNING("handle_open_request_owner:name=%s:owner not found", name);
+        AFLOG_WARNING("%s_owner:name=%s:owner not found", __func__, name);
         return;
     }
 
@@ -344,6 +344,13 @@ static void notify_unregister_client(attrd_client_t *client)
             sAttr[i].owner = NULL;
         }
         remove_notify_client(&sAttr[i].notify, client);
+    }
+
+    /* if this is the edge daemon, unregister edge attribute owners */
+    if (client->ownerId == AF_ATTR_OWNER_EDGED) {
+        for (int i = 0; i < sNumEdgeAttrs; i++) {
+            sEdgeAttr[i].owner = NULL;
+        }
     }
 
     /* Unregister edge attribute notifications when hubby is being unregistered
@@ -1339,6 +1346,11 @@ static void send_defaults_to_scripts(int numProfileAttrs)
     }
 }
 
+#define ATTRC_PREFIX "ATTRC."
+#define ATTRC_PREFIX_LEN (sizeof(ATTRC_PREFIX)-1)
+#define IPC_PREFIX "IPC."
+#define IPC_PREFIX_LEN (sizeof(IPC_PREFIX)-1)
+
 static void handle_open_request(uint8_t *rxBuf, int rxBufSize, int pos, attrd_client_t *client, uint32_t seqNum)
 {
     if (client == NULL || rxBuf == NULL || rxBufSize < 0) {
@@ -1362,15 +1374,35 @@ static void handle_open_request(uint8_t *rxBuf, int rxBufSize, int pos, attrd_cl
     }
     name[nameSize] = '\0';
 
+    /* attrc can spoof an owner set by setting the owner to ATTRC.<owner> */
+    int spoof = 0;
+    if (!strncmp(name, ATTRC_PREFIX, ATTRC_PREFIX_LEN)) {
+        /* attrc is spoofing an owner set; replace "ATTRC." prefix to "IPC." */
+        spoof = 1;
+        int len = strlen(name);
+        for (int i = sizeof(ATTRC_PREFIX_LEN); i < len; i++) {
+            name[i - ATTRC_PREFIX_LEN + IPC_PREFIX_LEN] = name[i];
+        }
+        name[len - ATTRC_PREFIX_LEN + IPC_PREFIX_LEN] = '\0';
+        memcpy(name, IPC_PREFIX, IPC_PREFIX_LEN);
+    }
+
     ownerId = client_find_ownerId_by_name(name);
     AFLOG_INFO("handle_open_request: ownerId=%d (%s)", ownerId, name);
     if (ownerId != AF_ATTR_OWNER_UNKNOWN && ownerId != AF_ATTR_OWNER_ATTRC) {
         attrd_client_t *oldClient = client_find_by_owner_id(ownerId);
         if (oldClient) {
-            AFLOG_WARNING("handle_open_request_dup_owner:name=%s:duplicate owner; dropping previous owner", name);
-            af_ipcs_close_client(sServer, oldClient->clientId);
+            if (spoof) {
+                AFLOG_WARNING("%s_dup_spoof:name=%s:attrc is spoofing an existing daemon; rejecting attrc", __func__, name);
+                status = AF_ATTR_STATUS_FORBIDDEN;
+                goto exit;
+            } else {
+                AFLOG_WARNING("handle_open_request_dup_owner:name=%s:duplicate owner; dropping previous owner", name);
+                af_ipcs_close_client(sServer, oldClient->clientId);
+            }
         }
     }
+
     if (ownerId != AF_ATTR_OWNER_UNKNOWN) {
         /* sets owner */
         notify_register_owner(client, name, ownerId);
