@@ -621,7 +621,7 @@ op_context_t *op_pool_alloc(void)
     if (retVal) {
         memset (retVal, 0, sizeof(op_context_t));
         retVal->opId = op_new_id();
-        AFLOG_DEBUG2("allocated op:opId=%d", retVal->opId);
+        AFLOG_DEBUG3("allocated op:opId=%d", retVal->opId);
     }
     return retVal;
 }
@@ -630,7 +630,7 @@ op_context_t *op_pool_alloc(void)
 void op_pool_free(op_context_t *o)
 {
     if (o != NULL) {
-        AFLOG_DEBUG2("freeing op:opId=%d", o->opId);
+        AFLOG_DEBUG3("freeing op:opId=%d", o->opId);
         af_mempool_free(o);
     }
 }
