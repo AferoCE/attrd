@@ -93,8 +93,10 @@ static uint8_t *sSetValue = NULL;
 static int sSetValueLength = 0;
 
 static int sStatus = 0;
+static int sWaitTimeout = 0;
 
 struct event_base *sEventBase = NULL;
+struct event *sWaitTimeoutEvent = NULL;
 
 static void on_set_finished(int status, uint32_t attributeId, void *context)
 {
@@ -108,10 +110,16 @@ static void on_set_finished(int status, uint32_t attributeId, void *context)
 
 static void on_notify(uint32_t attributeId, uint8_t *value, int length, void *context)
 {
-    printf ("%u ", attributeId);
     char *output = vf_alloc_and_convert_output_value(sArgType, value, length);
-    printf ("%s\n", output);
+    printf ("%u %s\n", attributeId, output);
     free(output);
+    event_base_loopbreak(sEventBase);
+}
+
+static void on_timeout(evutil_socket_t s, short what, void *context)
+{
+    AFLOG_ERR("on_timeout:timeout=%d", sWaitTimeout);
+    sStatus = AF_ATTR_STATUS_TIMEOUT;
     event_base_loopbreak(sEventBase);
 }
 
@@ -163,6 +171,16 @@ static void on_open(int status, void *context)
             event_base_loopbreak(sEventBase);
         }
     }
+
+    if (sOp == OP_WAIT && sWaitTimeout) {
+        sWaitTimeoutEvent = evtimer_new(sEventBase, on_timeout, NULL);
+        if (sWaitTimeoutEvent) {
+            struct timeval tv = { sWaitTimeout, 0 };
+            event_add(sWaitTimeoutEvent, &tv);
+        } else {
+            fprintf(stderr, "create event failed: %s\n", strerror(errno));
+        }
+    }
 }
 
 
@@ -173,10 +191,10 @@ void usage()
     fprintf(stderr, "   attrc list                          -- list attributes\n");
     fprintf(stderr, "   attrc set <attribute> <value>       -- set attribute value\n");
     fprintf(stderr, "   attrc get <attribute>               -- get attribute value\n");
-    fprintf(stderr, "   attrc wait <attribute>              -- wait for notification\n");
+    fprintf(stderr, "   attrc wait <attribute> [<timeout>]  -- wait for notification\n");
     fprintf(stderr, "   attrc owner_set <attribute> <value> -- spoof the owner and set an attribute\n");
-    fprintf(stderr, "   attribute can be specified by number, e.g., 51613\n");
-    fprintf(stderr, "   or by name, e.g., ATTRD_DEBUG_LEVEL\n");
+    fprintf(stderr, "attribute can be specified by number, e.g., 51613 or by name, e.g., ATTRD_DEBUG_LEVEL\n");
+    fprintf(stderr, "wait timeout is specified in seconds and defaults to no timeout\n");
 }
 
 static int
@@ -299,6 +317,13 @@ static int parse_params(int argc, char * argv[])
                 }
                 sAttrId = attr->id;
                 sArgType = attr->type;
+                if (argc > 3) {
+                    if (is_digits(argv[3])) {
+                        sWaitTimeout = atoi(argv[3]);
+                    } else {
+                        return ATTRC_ERR;
+                    }
+                }
                 return ATTRC_OK;
             }
             break;
@@ -424,7 +449,7 @@ int main(int argc, char * argv[])
     }
 
     int err = af_attr_open(sEventBase, ownerName,
-                           (sOp == OP_WAIT ? 10000 : 0), &r,
+                           (sOp == OP_WAIT ? 1 : 0), &r,
                            (sOp == OP_WAIT ? on_notify : NULL), // notify callback
                            NULL,                                // owner set callback
                            NULL,                                // owner get callback
@@ -441,6 +466,11 @@ int main(int argc, char * argv[])
     event_base_dispatch(sEventBase);
 
     af_attr_close();
+
+    if (sWaitTimeoutEvent) {
+        event_free(sWaitTimeoutEvent);
+        sWaitTimeoutEvent = NULL;
+    }
 
     event_base_free(sEventBase);
     if (sSetValue) {
