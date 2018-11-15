@@ -4,7 +4,7 @@ bin_PROGRAMS = attrd attr_test attrc
 else
 bin_PROGRAMS = attrd attrc
 endif
-lib_LIBRARIES = libaf_attr.a
+lib_LTLIBRARIES = libaf_attr.la
 include_HEADERS = af_attr_def.h af_attr_client.h af_profile.h
 
 if BUILD_TARGET_DEBUG
@@ -27,9 +27,10 @@ attrc_SOURCES = attrc.c value_formats.c profile.c
 attrc_LDFLAGS = -ggdb3 -L. -laf_attr -levent_pthreads -lpthread -levent -laf_ipc -laf_util
 attrc_CFLAGS = -Wall -Werror -std=gnu99 $(CFLAGS_BUILD_TARGET)
 
-libaf_attr_a_SOURCES = attr_api.c attr_common.c profile.c
-libaf_attr_a_CFLAGS = -Wall -std=gnu99 $(CFLAGS_BUILD_TARGET)
-libaf_attr_a_LDLIBS = -L. -levent -laf_ipc -laf_util
+LIBPATH=$(CURDIR)/.libs
+libaf_attr_la_SOURCES = attr_api.c attr_common.c profile.c
+libaf_attr_la_CFLAGS = -Wall -std=gnu99 $(CFLAGS_BUILD_TARGET)
+libaf_attr_la_LDLIBS = -module -Wall -shared -fPIC -soname, libaf_attr.so.0 -levent -laf_ipc -laf_util
 
 .PHONY : build_info.h
 $(attrd_SOURCES) : build_info.h

@@ -29,10 +29,11 @@ define Package/attrd/install
 	$(INSTALL_DIR) $(1)/usr/lib
 	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/bin/attrd $(1)/usr/bin/
 	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/bin/attrc $(1)/usr/bin/
+	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/lib/libaf_attr.so* $(1)/usr/lib/
 
 	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/include/af_attr_client.h $(STAGING_DIR)/usr/include
 	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/include/af_attr_def.h $(STAGING_DIR)/usr/include
-	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/lib/libaf_attr.a $(STAGING_DIR)/usr/lib
+	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/lib/libaf_attr.so* $(STAGING_DIR)/usr/lib
 
 	$(CP) -rp $(CURDIR)/pkg/files/* $(1)
 endef
