@@ -12,7 +12,7 @@
 #include <event2/event.h>
 #include "attr_prv.h"
 
-int script_parse_config(struct event_base *base);
+int script_setup(struct event_base *base);
 
 /* called when the attribute daemon has been set up and should run the init scripts */
 void script_init(void);

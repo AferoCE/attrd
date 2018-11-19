@@ -11,8 +11,10 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <ctype.h>
+#include <dirent.h>
 #include "attr_script.h"
 #include "value_formats.h"
 #include "af_log.h"
@@ -20,6 +22,7 @@
 #include "af_mempool.h"
 
 #define ATTR_SCRIPT_FILE_NAME "/etc/af_events.conf"
+#define ATTR_SCRIPT_DIR "/etc/af_attr.d/"
 
 #define __ETYPES \
     __ETYPE_DEF(INIT,init,20) \
@@ -113,6 +116,7 @@ static pid_entry_t *s_pidEntries = NULL;
 
 static struct event_base *s_base = NULL;
 static struct event *s_sigchld = NULL;
+static struct event *s_sighup = NULL;
 
 static char *find_path(char *path)
 {
@@ -640,51 +644,25 @@ static void clean_pools(void)
     }
 }
 
-/* public API */
-
-int script_parse_config(struct event_base *base)
+static void load_script(char *name, int warn)
 {
-    if (base == NULL) {
-        errno = EINVAL;
-        return -1;
-    }
-    s_base = base;
-
-    /* if scripts are currently running exit immediately */
-    if (s_pidEntries != NULL) {
-        AFLOG_ERR("reload_scripts_in_progress:pid=%d", s_pidEntries->pid);
-        errno = EBUSY;
-        return -1;
+    struct stat st;
+    if (stat(name, &st) < 0) {
+        return;
     }
 
-    /* destroy any existing mempools */
-    clean_pools();
-
-    /* create mempools */
-    s_scriptPool = af_mempool_create(16, sizeof(script_entry_t), AF_MEMPOOL_FLAG_EXPAND);
-    if (s_scriptPool == NULL) {
-        AFLOG_ERR("reload_scripts_script_create:errno=%d", errno);
-        goto error;
+    if (!S_ISREG(st.st_mode)) {
+        if (warn) {
+            AFLOG_WARNING("%s_ignore:node=%s,dir=%s:node not a regular file; ignoring", __func__, name, ATTR_SCRIPT_DIR);
+        }
+        return;
     }
 
-    s_pathPool = af_mempool_create(8, sizeof(path_entry_t), AF_MEMPOOL_FLAG_EXPAND);
-    if (s_pathPool == NULL) {
-        AFLOG_ERR("reload_scripts_path_create:errno=%d", errno);
-        goto error;
-    }
+    AFLOG_INFO("%s_load:name=%s", __func__, name);
 
-    s_pidPool = af_mempool_create(8, sizeof(pid_entry_t), AF_MEMPOOL_FLAG_EXPAND);
-    if (s_pidPool == NULL) {
-        AFLOG_ERR("reload_scripts_pid_create:errno=%d", errno);
-        goto error;
-    }
-
-    FILE *f;
-
-    f = fopen(ATTR_SCRIPT_FILE_NAME, "r");
+    FILE *f = fopen(name, "r");
     if (f == NULL) {
-        AFLOG_ERR("reload_scripts_open:errno=%d", errno);
-        goto error;
+        return;
     }
 
     char buf[1024];
@@ -716,15 +694,53 @@ int script_parse_config(struct event_base *base)
         lineno++;
     }
     fclose(f);
+}
 
-    if (s_sigchld == NULL) {
-        /* register the SIGCHLD event handler */
-        s_sigchld = evsignal_new(s_base, SIGCHLD, handle_sigchld, NULL);
-        if (s_sigchld == NULL) {
-            AFLOG_ERR("reload_scripts_sigchld");
-            goto error;
+static int reload_scripts(void)
+{
+    /* if scripts are currently running exit immediately */
+    if (s_pidEntries != NULL) {
+        AFLOG_ERR("reload_scripts_in_progress:pid=%d", s_pidEntries->pid);
+        errno = EBUSY;
+        return -1;
+    }
+
+    /* destroy any existing mempools */
+    clean_pools();
+
+    /* create mempools */
+    s_scriptPool = af_mempool_create(16, sizeof(script_entry_t), AF_MEMPOOL_FLAG_EXPAND);
+    if (s_scriptPool == NULL) {
+        AFLOG_ERR("reload_scripts_script_create:errno=%d", errno);
+        goto error;
+    }
+
+    s_pathPool = af_mempool_create(8, sizeof(path_entry_t), AF_MEMPOOL_FLAG_EXPAND);
+    if (s_pathPool == NULL) {
+        AFLOG_ERR("reload_scripts_path_create:errno=%d", errno);
+        goto error;
+    }
+
+    s_pidPool = af_mempool_create(8, sizeof(pid_entry_t), AF_MEMPOOL_FLAG_EXPAND);
+    if (s_pidPool == NULL) {
+        AFLOG_ERR("reload_scripts_pid_create:errno=%d", errno);
+        goto error;
+    }
+
+    load_script(ATTR_SCRIPT_FILE_NAME, 0);
+    DIR *dir = opendir(ATTR_SCRIPT_DIR);
+    if (dir) {
+        struct dirent *ent;
+        char buf[1024];
+        while ((ent = readdir(dir)) != NULL) {
+            if (ent->d_name[0] != '.') {
+                sprintf(buf, "%s%s", ATTR_SCRIPT_DIR, ent->d_name);
+                load_script(buf, 1);
+            }
         }
-        event_add(s_sigchld, NULL);
+        closedir(dir);
+    } else {
+        AFLOG_INFO("%s_opendir:errno=%d,dir=%s:ignoring directory", __func__, errno, ATTR_SCRIPT_DIR);
     }
 
     return 0;
@@ -734,6 +750,64 @@ error:
 
     return -1;
 }
+
+static void handle_sighup(evutil_socket_t fd, short what, void *context)
+{
+    AFLOG_INFO("%s::sighup received", __func__);
+    if (reload_scripts() < 0) {
+        AFLOG_ERR("%s_reload_err:errno=%d", __func__, errno);
+    }
+}
+
+/* public API */
+
+int script_setup(struct event_base *base)
+{
+    if (base == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    s_base = base;
+
+    /* register the SIGHUP event handler */
+    if (s_sighup == NULL) {
+        s_sighup = evsignal_new(s_base, SIGHUP, handle_sighup, NULL);
+        if (s_sighup == NULL) {
+            AFLOG_ERR("%s_sighup:errno=%d", __func__, errno);
+            goto error;
+        }
+        event_add(s_sighup, NULL);
+    }
+
+    /* register the SIGCHLD event handler */
+    if (s_sigchld == NULL) {
+        s_sigchld = evsignal_new(s_base, SIGCHLD, handle_sigchld, NULL);
+        if (s_sigchld == NULL) {
+            AFLOG_ERR("%s_sigchld:errno=%d", __func__, errno);
+            goto error;
+        }
+        event_add(s_sigchld, NULL);
+    }
+
+    if (reload_scripts() < 0) {
+        goto error;
+    }
+
+    return 0;
+
+error:
+    if (s_sighup) {
+        event_free(s_sighup);
+        s_sighup = NULL;
+    }
+    if (s_sigchld) {
+        event_free(s_sigchld);
+        s_sigchld = NULL;
+    }
+
+    return -1;
+}
+
 
 void script_init(void)
 {

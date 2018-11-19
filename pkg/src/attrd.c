@@ -1692,7 +1692,7 @@ int main(int argc, char *argv[])
         goto exit;
     }
 
-    script_parse_config(sEventBase);
+    script_setup(sEventBase);
 
     script_init();
     if (numProfileAttrs > 0) {
