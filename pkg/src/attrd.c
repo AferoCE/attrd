@@ -740,25 +740,12 @@ static void handle_set_request(trans_context_t *t, attrd_client_t *c)
                              t->attrValue->attrId, a->name, sAttrClientNames[a->ownerId], hexBuf);
             }
             /* send nothing now: waiting for script to provide status */
-            trans_cleanup(t);
-            return;
+            status = AF_ATTR_STATUS_INT_NO_STATUS;
+            goto exit;
         } else {
-            if (c != NULL && c->ownerId == AF_ATTR_OWNER_ATTRC) {
-                /* attribute client can spoof an owner setting its own attribute */
-                if (g_debugLevel >= 1) {
-                    char hexBuf[80];
-                    af_util_convert_data_to_hex_with_name("value", t->attrValue->value, t->attrValue->size, hexBuf, sizeof(hexBuf));
-                    AFLOG_DEBUG1("attrc_spoof_owner_set:attrId=%d,name=%s,owner=%s,%s",
-                                 t->attrValue->attrId, a->name, sAttrClientNames[a->ownerId], hexBuf);
-                }
-                if (IS_NOTIFY(a->flags)) {
-                    notify_clients_of_attribute(t->attrValue, a);
-                }
-            } else {
-                AFLOG_ERR("handle_set_request_no_owner:attrId=%d,ownerId=%d:", a->id, a->ownerId);
-                status = AF_ATTR_STATUS_OWNER_NOT_AVAILABLE;
-                goto exit;
-            }
+            AFLOG_ERR("handle_set_request_no_owner:attrId=%d,ownerId=%d:", a->id, a->ownerId);
+            status = AF_ATTR_STATUS_OWNER_NOT_AVAILABLE;
+            goto exit;
         }
     } else {
         /* the client attempting to set the attribute is not the owner */
@@ -794,9 +781,9 @@ static void handle_set_request(trans_context_t *t, attrd_client_t *c)
                 notify_owner_of_attribute(s->opId, s->u.ss.attrValue, a->owner);
 
                 /* send nothing now; waiting for owner to provide status */
-                trans_cleanup(t);
+                status = AF_ATTR_STATUS_INT_NO_STATUS;
+                goto exit;
 
-                return;
             } else {
                 /* no op contexts available */
                 AFLOG_ERR("handle_set_request_alloc::");
@@ -810,7 +797,7 @@ static void handle_set_request(trans_context_t *t, attrd_client_t *c)
     }
 
 exit:
-    {
+    if (status != AF_ATTR_STATUS_INT_NO_STATUS) {
         /* send back a set reply */
         uint8_t txBuf[32];
 
@@ -822,9 +809,9 @@ exit:
         } else {
             AFLOG_ERR("handle_set_request_fwd_rpc:len=%d:", len);
         }
-
-        trans_cleanup(t);
     }
+
+    trans_cleanup(t);
 }
 
 void send_attrd_set_response(uint8_t status, uint16_t clientId, uint16_t setId, attr_value_t *value, void *attr)
