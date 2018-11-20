@@ -143,7 +143,7 @@ int af_attr_send_set_response (int status, uint16_t setId);
  * back.
  */
 
-typedef void (*af_attr_get_response_callback_t)(uint8_t status, uint32_t attributeId, uint8_t *value, int length, void *context);
+typedef void (*af_attr_get_response_callback_t)(int status, uint32_t attributeId, uint8_t *value, int length, void *context);
 
 int af_attr_get (uint32_t attributeId, af_attr_get_response_callback_t cb, void *context);
 

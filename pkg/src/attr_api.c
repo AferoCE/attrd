@@ -804,7 +804,7 @@ static void handle_get_response(int status, uint32_t seqNum, uint8_t *rxBuf, int
     }
 
     op_context_t *g = (op_context_t *)context;
-    uint8_t rStatus = AF_ATTR_STATUS_OK;
+    int rStatus = AF_ATTR_STATUS_OK;
     int len;
 
     if (status != 0) {

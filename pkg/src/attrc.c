@@ -123,7 +123,7 @@ static void on_timeout(evutil_socket_t s, short what, void *context)
     event_base_loopbreak(sEventBase);
 }
 
-static void on_get_response(uint8_t status, uint32_t attributeId, uint8_t *value, int length, void *context)
+static void on_get_response(int status, uint32_t attributeId, uint8_t *value, int length, void *context)
 {
     if (status != AF_ATTR_STATUS_OK) {
         AFLOG_ERR("on_get_response:status=%s", sAttrStatus[status]);

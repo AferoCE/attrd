@@ -63,7 +63,7 @@ static void on_notify(uint32_t attributeId, uint8_t *value, int length, void *co
     event_base_loopbreak(sEventBase);
 }
 
-static void on_get_response(uint8_t status, uint32_t attributeId, uint8_t *value, int length, void *context)
+static void on_get_response(int status, uint32_t attributeId, uint8_t *value, int length, void *context)
 {
     if (status != AF_ATTR_STATUS_OK) {
         printf ("status=%d\n", status);
