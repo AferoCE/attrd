@@ -1288,6 +1288,9 @@ static void send_defaults_to_client(attrd_client_t *client)
                 if ((a->flags & ATTR_FLAG_HAS_DEFAULT) && a->default_length) {
                     AFLOG_DEBUG1("%s_edge:id=%d,len=%d", __func__, sEdgeAttr[i].id, a->default_length);
                     send_notification_to_client_with_id(client, sEdgeAttr[i].id, a->default_data, a->default_length);
+                } else {
+                    AFLOG_DEBUG1("%s_edge_null:id=%d:sending NULL default to edge", __func__, sEdgeAttr[i].id);
+                    send_notification_to_client_with_id(client, sEdgeAttr[i].id, NULL, 0);
                 }
             } else {
                 AFLOG_ERR("%s_attr_not_in_profile:attr_id=%d", __func__, sEdgeAttr[i].id);
