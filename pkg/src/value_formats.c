@@ -10,6 +10,8 @@
 #include <stdio.h>
 #include <errno.h>
 #include <ctype.h>
+#include <inttypes.h>
+#include <limits.h>
 #include "value_formats.h"
 #include "attr_prv.h"
 #include "af_log.h"
@@ -173,6 +175,25 @@ uint8_t *vf_alloc_and_convert_input_value(af_attr_type_t type, const char *val, 
             break;
         }
 
+        case AF_ATTR_TYPE_SINT64:
+        {
+            int64_t long_long_val = strtoll(val, NULL, 10);
+            if ((long_long_val == LLONG_MIN || long_long_val == LLONG_MAX) && errno == ERANGE) {
+                fprintf(stderr, "value outside of int64_t range\n");
+                AFLOG_ERR("vf_alloc_and_convert_input_val_int64:val=%s:value outside of int64_t range", val);
+                return NULL;
+            }
+            setValue = (uint8_t *)malloc(sizeof(int64_t));
+            if (setValue == NULL) {
+                fprintf(stderr, "Memory allocation error\n");
+                AFLOG_ERR("vf_alloc_and_convert_input_val_mem::can't allocate space for value");
+                return NULL;
+            }
+            af_attr_store_int64(setValue, long_long_val);
+            *lengthP = sizeof(int64_t);
+            break;
+        }
+
         case AF_ATTR_TYPE_UTF8S:
         {
             int size = strlen(val) + 1;
@@ -235,7 +256,7 @@ uint8_t *vf_alloc_and_convert_input_value(af_attr_type_t type, const char *val, 
         }
 
         default:
-            fprintf(stderr, "Illegal type");
+            fprintf(stderr, "Illegal type\n");
             AFLOG_ERR("vf_alloc_and_convert_input_val_mem:argType=%d:illegal type", type);
             return NULL;
             break;
@@ -277,6 +298,12 @@ char *vf_alloc_and_convert_output_value(af_attr_type_t argType, uint8_t *value, 
             output = (char *)malloc(12); /* maximum size of decimal int32 + null terminator */
             if (output != NULL) {
                 sprintf (output, "%d", af_attr_get_int32(value));
+            }
+            break;
+        case AF_ATTR_TYPE_SINT64:
+            output = (char *)malloc(22); /* maximum size of decimal int64 + null terminator */
+            if (output != NULL) {
+                sprintf (output, "%" PRId64, (int64_t)af_attr_get_int64(value));
             }
             break;
         case AF_ATTR_TYPE_BYTES:
