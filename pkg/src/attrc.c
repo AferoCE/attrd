@@ -18,6 +18,7 @@
 #include "value_formats.h"
 #include "af_profile.h"
 
+
 #define EDGE_ATTR_OWNER_NAME_PREFIX     "EDGED_"
 #define EDGE_ATTR_OWNER_NAME_PREFIX_LEN (sizeof(EDGE_ATTR_OWNER_NAME_PREFIX)-1)
 
@@ -98,6 +99,65 @@ static int sWaitTimeout = 0;
 struct event_base *sEventBase = NULL;
 struct event *sWaitTimeoutEvent = NULL;
 
+
+/*** A BIT OF A HACK - to be compatible with aflib v4 & hubby ***/
+/* -------------------------- */
+/* aflib4 - aflib release v4  */
+/* -------------------------- */
+/* We have introduced an extra parameter in the af_lib_set_xxx functions. This
+   extra enum parameter indicates the reason for the set_attribute call.
+   HACKY: we need to use a byte arrays (instead of single value). Make a contract
+          with hubby about the particular format of the value returned.
+   This causes an change in how we format the 'value' field passing into af_attr_set():
+
+version=1 uses the following format:
+(version and set reason are called META_DATA
+
+   1 byte     1 byte     variable_length
+[ version | set reason | data (attribute value ) ]
+*/
+
+/* VERSION = 1 */
+#define AFLIB_EDGE_FORMAT_VERSION        1
+
+/* byte length version, and set reason */
+#define AFLIB_EDGE_VERSION_LEN           1
+#define AFLIB_EDGE_SET_REASON_LEN        1
+#define AFLIB_EDGE_META_DATA_LEN         (AFLIB_EDGE_VERSION_LEN + AFLIB_EDGE_SET_REASON_LEN)
+
+
+/* convert to attribute store reason */
+#define UPDATE_REASON_LOCAL_OR_MCU_UPDATE   0x01 // local or unsolicited UPDATE from MCU
+                                                 // defined in aflib file: aflib_msg_types.h
+static uint8_t af_lib_set_reason_converter()
+{
+    // for attrc, this is the only reason we are doing a set
+    // hubby uses the reason to update the attribute
+    return UPDATE_REASON_LOCAL_OR_MCU_UPDATE;
+}
+
+/* internal routine formats the byte values array */
+static void format_byte_values(const uint16_t       value_len,
+                               const uint8_t        *value,
+                               const uint8_t        set_reason, // not used for now
+                               const uint32_t       value_array_len,
+                               uint8_t              *value_array)
+{
+    uint32_t len = AFLIB_EDGE_META_DATA_LEN + value_len;
+
+    if (len >= value_array_len) {
+        value_array[0] = AFLIB_EDGE_FORMAT_VERSION;
+        value_array[1] = af_lib_set_reason_converter();
+        memcpy(&value_array[2], value, value_len);
+    }
+    else {
+        AFLOG_ERR("format_bytes_value: invalid value_array len:%d vs value_array_len:%d", len, value_array_len);
+    }
+    return;
+}
+/*** END: A BIT OF A HACK - to be compatible with aflib v4 ******/
+
+
 static void on_set_finished(int status, uint32_t attributeId, void *context)
 {
     if (status != AF_ATTR_STATUS_OK) {
@@ -163,7 +223,22 @@ static void on_open(int status, void *context)
     }
 
     if (sOp == OP_SET) {
-        status = af_attr_set (sAttrId, sSetValue, sSetValueLength, on_set_finished, NULL);
+        uint8_t len = AFLIB_EDGE_META_DATA_LEN + 1;
+        uint8_t byte_values[len];
+        char hexBuf[80];
+
+        af_util_convert_data_to_hex_with_name("Val", (uint8_t *)sSetValue,
+                                             sSetValueLength, hexBuf, sizeof(hexBuf));
+        fprintf(stderr, "set: (val,len)=(%s, %d)\n", hexBuf, sSetValueLength);
+
+        // set EDGE attributes
+        if (sAttrId >=  AF_ATTR_EDGE_START && sAttrId <= AF_ATTR_EDGE_END)    {
+            format_byte_values(sSetValueLength, (const uint8_t *)sSetValue, 1, len, (uint8_t *)&byte_values[0]);
+            status = af_attr_set (sAttrId, &byte_values[0], len, on_set_finished, NULL);
+        }
+        else {
+            status = af_attr_set (sAttrId, sSetValue, sSetValueLength, on_set_finished, NULL);
+        }
         if (status != AF_ATTR_STATUS_OK) {
             AFLOG_ERR("on_open_attr_set:status=%d", status);
             fprintf(stderr, "set failed: %s\n", sAttrStatus[status]);

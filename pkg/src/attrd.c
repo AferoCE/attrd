@@ -697,10 +697,10 @@ static void handle_set_request(trans_context_t *t, attrd_client_t *c)
         goto exit;
     }
 
-    if (id >= AF_ATTR_EDGE_START && id <= AF_ATTR_EDGE_END && t->attrValue->size > a->maxLength) {
-        AFLOG_ERR("%s_edge_length:attrId=%d,len=%d,max_len=%d:", __func__, t->attrValue->attrId, t->attrValue->size, a->maxLength);
-        status = AF_ATTR_STATUS_BAD_DATA; /* NOTE this error is overloaded but shouldn't make it to the client in other cases */
-        goto exit;
+    /* these are EDGE attributes, perform validation if any */
+    if (id >= AF_ATTR_EDGE_START && id <= AF_ATTR_EDGE_END) {
+        AFLOG_DEBUG1("client_set_edge_attribute:attrId=%d, name=%s,owner=%s",
+                      t->attrValue->attrId, a->name, sAttrClientNames[a->ownerId]);
     }
 
     if (a->owner == NULL && a->ownerId == AF_ATTR_OWNER_ATTRD) {
